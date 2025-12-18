@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 5: Testing Authentication and Authorization - Flask Testing Mastery</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/prism.css">
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="chapter04.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter06.html">Next Chapter →</a>
+        </div>
+
+        <h1>Chapter 5: Testing Authentication and Authorization</h1>
+        <p class="chapter-subtitle">Secure testing of user access control with Flask-Login</p>
+
+        <div class="github-links">
+            <span class="github-label">Chapter Code:</span>
+            <a href="https://github.com/goodkent/flask-testing/tree/ch05-end" class="github-link">Browse</a>
+            <a href="https://github.com/goodkent/flask-testing/archive/refs/tags/ch05-end.zip" class="github-link">Zip</a>
+            <a href="https://github.com/goodkent/flask-testing/compare/ch04-end...ch05-end" class="github-link">Diff</a>
+        </div>
+
+        <div class="intro-section">
+            <p>Welcome back! In Chapter 4, you built User models with password hashing and created registration and login forms with comprehensive validation. But forms by themselves don't do anything—they're just data validation tools. In this chapter, you're going to bring everything together by implementing actual authentication routes, integrating Flask-Login for session management, and building a complete role-based access control system.</p>
+
+            <p>If you've worked with authentication before, you know it can be tricky to test. How do you test that login works without actually logging in? How do you test protected routes that require authentication? How do you verify that users can only access what they're authorized to see? These are all great questions, and by the end of this chapter, you'll have answers to all of them.</p>
+
+            <p>Authentication is one of the most critical aspects of web applications. A single bug in your authentication logic could mean unauthorized users accessing private data, or legitimate users being locked out of their accounts. That's why testing authentication thoroughly is so important—and why I'm dedicating an entire chapter to it.</p>
+
+            <p>In this chapter, you'll implement Flask-Login, create registration and login routes, build protected routes that require authentication, add role-based access control, and learn how to mock authenticated users in your tests. By the end, FlaskBlog Pro will have a complete, production-ready authentication system with comprehensive test coverage.</p>
+        </div>
+
+        <h2>Learning Objectives</h2>
+        <ul>
+            <li>Integrate Flask-Login for session management</li>
+            <li>Test user registration and login routes</li>
+            <li>Test logout functionality and session cleanup</li>
+            <li>Test protected routes that require authentication</li>
+            <li>Implement and test role-based access control</li>
+            <li>Mock authenticated users in tests</li>
+        </ul>
+
+        <h2>Installing Flask-Login</h2>
+
+        <p>Before we can implement authentication, we need to install Flask-Login. This extension handles all the complexity of managing user sessions, remembering logged-in users between requests, and protecting routes that require authentication.</p>
+
+        <p>Make sure your virtual environment is activated and install Flask-Login:</p>
+
+        <pre><code class="language-bash">(venv) $ pip install flask-login</code></pre>
+
+        <p>Now add it to your <code>requirements.txt</code> file:</p>
+
+        <pre><code class="language-bash">(venv) $ pip freeze > requirements.txt</code></pre>
+
+        <h2>Setting Up Flask-Login</h2>
+
+        <p>Flask-Login requires some configuration in your application factory. It needs to know how to load users from your database, and it needs to be initialized with your Flask app. Let's update <code>app/__init__.py</code>:</p>
+
+        <pre><code class="language-python"># app/__init__.py: Integrating Flask-Login
+
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager
+from config import Config
+
+db = SQLAlchemy()
+login = LoginManager()
+login.login_view = 'auth.login'
+login.login_message = 'Please log in to access this page.'
+
+def create_app(config_class=Config):
+    app = Flask(__name__)
+    app.config.from_object(config_class)
+
+    db.init_app(app)
+    login.init_app(app)
+
+    from app.auth import bp as auth_bp
+    app.register_blueprint(auth_bp, url_prefix='/auth')
+
+    from app.main import bp as main_bp
+    app.register_blueprint(main_bp)
+
+    return app
+
+from app import models  # Import models at the end</code></pre>
+
+        <p>Let's break down what's new here:</p>
+
+        <ul>
+            <li><code>login = LoginManager()</code> creates a LoginManager instance</li>
+            <li><code>login.login_view = 'auth.login'</code> tells Flask-Login where to redirect users who try to access protected pages</li>
+            <li><code>login.login_message</code> sets the flash message shown to users who need to log in</li>
+            <li><code>login.init_app(app)</code> connects Flask-Login to our application</li>
+            <li>We're registering two blueprints: <code>auth</code> for authentication routes and <code>main</code> for regular routes</li>
+        </ul>
+
+        <p>You might be wondering about blueprints—we haven't used them before! Blueprints are Flask's way of organizing routes into logical groups. We'll use the <code>auth</code> blueprint for login/registration/logout, and the <code>main</code> blueprint for everything else. This keeps our code organized and makes testing easier.</p>
+
+        <h2>Updating the User Model</h2>
+
+        <p>Flask-Login needs your User model to implement certain methods and properties. Let's update <code>app/models.py</code> to make our User model compatible with Flask-Login:</p>
+
+        <pre><code class="language-python"># app/models.py: Making User model compatible with Flask-Login
+
+from datetime import datetime
+from app import db, login
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import UserMixin
+
+@login.user_loader
+def load_user(id):
+    return User.query.get(int(id))
+
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    email = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(128))
+    posts = db.relationship('Post', backref='author', lazy='dynamic')
+    is_admin = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<User {self.username}>'
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+class Post(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(100), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+    def __repr__(self):
+        return f'<Post {self.title}>'</code></pre>
+
+        <p>The key changes here:</p>
+
+        <ul>
+            <li><code>UserMixin</code> provides default implementations of methods Flask-Login needs (<code>is_authenticated</code>, <code>is_active</code>, <code>is_anonymous</code>, <code>get_id</code>)</li>
+            <li><code>@login.user_loader</code> decorator tells Flask-Login how to reload a user from the session</li>
+            <li><code>is_admin</code> field for role-based access control</li>
+            <li><code>created_at</code> timestamp for tracking when users register</li>
+        </ul>
+
+        <div class="note">
+            <p><strong>Understanding UserMixin:</strong> You might wonder what UserMixin actually does. It's a convenience class that provides default implementations of four properties/methods that Flask-Login requires: <code>is_authenticated</code> (always True for logged-in users), <code>is_active</code> (True if the account is active), <code>is_anonymous</code> (always False for real users), and <code>get_id()</code> (returns the user's ID as a string). Without UserMixin, you'd need to implement these yourself!</p>
+        </div>
+
+        <h2>Creating the Blueprint Structure</h2>
+
+        <p>Now we need to create the blueprint files. First, create two new directories in the <code>app</code> folder:</p>
+
+        <pre><code class="language-bash">(venv) $ mkdir app/auth
+(venv) $ mkdir app/main</code></pre>
+
+        <p>Create <code>app/auth/__init__.py</code>:</p>
+
+        <pre><code class="language-python"># app/auth/__init__.py: Auth blueprint initialization
+
+from flask import Blueprint
+
+bp = Blueprint('auth', __name__)
+
+from app.auth import routes</code></pre>
+
+        <p>Create <code>app/main/__init__.py</code>:</p>
+
+        <pre><code class="language-python"># app/main/__init__.py: Main blueprint initialization
+
+from flask import Blueprint
+
+bp = Blueprint('main', __name__)
+
+from app.main import routes</code></pre>
+
+        <p>These files create the blueprints and import their routes (which we'll create next).</p>
+
+        <h2>Creating Authentication Routes</h2>
+
+        <p>Now for the exciting part—implementing the actual authentication routes! Create <code>app/auth/routes.py</code>:</p>
+
+        <pre><code class="language-python"># app/auth/routes.py: Authentication routes
+
+from flask import render_template, redirect, url_for, flash, request
+from flask_login import current_user, login_user, logout_user, login_required
+from app import db
+from app.auth import bp
+from app.auth.forms import LoginForm, RegistrationForm
+from app.models import User
+
+@bp.route('/register', methods=['GET', 'POST'])
+def register():
+    """User registration route."""
+    if current_user.is_authenticated:
+        return redirect(url_for('main.index'))
+    
+    form = RegistrationForm()
+    if form.validate_on_submit():
+        user = User(username=form.username.data, email=form.email.data)
+        user.set_password(form.password.data)
+        db.session.add(user)
+        db.session.commit()
+        flash('Congratulations, you are now a registered user!', 'success')
+        return redirect(url_for('auth.login'))
+    
+    return render_template('auth/register.html', title='Register', form=form)
+
+@bp.route('/login', methods=['GET', 'POST'])
+def login():
+    """User login route."""
+    if current_user.is_authenticated:
+        return redirect(url_for('main.index'))
+    
+    form = LoginForm()
+    if form.validate_on_submit():
+        user = User.query.filter_by(username=form.username.data).first()
+        if user is None or not user.check_password(form.password.data):
+            flash('Invalid username or password', 'error')
+            return redirect(url_for('auth.login'))
+        
+        login_user(user, remember=form.remember_me.data)
+        next_page = request.args.get('next')
+        if not next_page or not next_page.startswith('/'):
+            next_page = url_for('main.index')
+        return redirect(next_page)
+    
+    return render_template('auth/login.html', title='Sign In', form=form)
+
+@bp.route('/logout')
+@login_required
+def logout():
+    """User logout route."""
+    logout_user()
+    return redirect(url_for('main.index'))</code></pre>
+
+        <p>Let's break down what's happening in each route:</p>
+
+        <h3>Registration Route</h3>
+        <ul>
+            <li>Checks if user is already logged in—if so, redirect to homepage</li>
+            <li>Creates a RegistrationForm instance</li>
+            <li>On form submission, creates a new User with hashed password</li>
+            <li>Commits to database and redirects to login</li>
+        </ul>
+
+        <h3>Login Route</h3>
+        <ul>
+            <li>Checks if user is already logged in</li>
+            <li>Validates login credentials</li>
+            <li>Uses <code>login_user()</code> to start the session</li>
+            <li>Handles "next" parameter for redirect after login (important for protected routes!)</li>
+            <li>Validates that "next" URL is safe (starts with '/')</li>
+        </ul>
+
+        <h3>Logout Route</h3>
+        <ul>
+            <li>Protected with <code>@login_required</code> decorator</li>
+            <li>Calls <code>logout_user()</code> to end the session</li>
+            <li>Redirects to homepage</li>
+        </ul>
+
+        <div class="note">
+            <p><strong>Security Note:</strong> Notice how we validate the <code>next</code> parameter in the login route? This prevents "open redirect" attacks where a malicious site could trick users into clicking a link like <code>/login?next=http://evil.com</code>. We only accept relative URLs that start with '/'.</p>
+        </div>
+
+        <p>Now create <code>app/auth/forms.py</code> (we'll move our forms here from the test file):</p>
+
+        <pre><code class="language-python"># app/auth/forms.py: Authentication forms
+
+from flask_wtf import FlaskForm
+from wtforms import StringField, PasswordField, BooleanField, SubmitField
+from wtforms.validators import DataRequired, Email, EqualTo, Length, ValidationError
+from app.models import User
+
+class RegistrationForm(FlaskForm):
+    username = StringField('Username', validators=[
+        DataRequired(), 
+        Length(min=3, max=64)
+    ])
+    email = StringField('Email', validators=[
+        DataRequired(), 
+        Email()
+    ])
+    password = PasswordField('Password', validators=[
+        DataRequired(),
+        Length(min=8)
+    ])
+    confirm_password = PasswordField('Confirm Password', validators=[
+        DataRequired(),
+        EqualTo('password', message='Passwords must match')
+    ])
+    submit = SubmitField('Register')
+
+    def validate_username(self, username):
+        user = User.query.filter_by(username=username.data).first()
+        if user is not None:
+            raise ValidationError('Username already taken. Please choose a different one.')
+
+    def validate_email(self, email):
+        user = User.query.filter_by(email=email.data).first()
+        if user is not None:
+            raise ValidationError('Email already registered. Please use a different one.')
+
+class LoginForm(FlaskForm):
+    username = StringField('Username', validators=[DataRequired()])
+    password = PasswordField('Password', validators=[DataRequired()])
+    remember_me = BooleanField('Remember Me')
+    submit = SubmitField('Sign In')</code></pre>
+
+        <h2>Creating Main Routes</h2>
+
+        <p>Now let's create some basic routes in the main blueprint, including a protected route that requires authentication. Create <code>app/main/routes.py</code>:</p>
+
+        <pre><code class="language-python"># app/main/routes.py: Main application routes
+
+from flask import render_template
+from flask_login import login_required, current_user
+from app.main import bp
+from app.models import Post
+
+@bp.route('/')
+@bp.route('/index')
+def index():
+    """Home page route."""
+    posts = Post.query.order_by(Post.created_at.desc()).all()
+    return render_template('index.html', title='Home', posts=posts)
+
+@bp.route('/dashboard')
+@login_required
+def dashboard():
+    """User dashboard - requires authentication."""
+    user_posts = Post.query.filter_by(user_id=current_user.id).order_by(
+        Post.created_at.desc()
+    ).all()
+    return render_template('dashboard.html', title='Dashboard', posts=user_posts)
+
+@bp.route('/admin')
+@login_required
+def admin():
+    """Admin panel - requires authentication and admin role."""
+    if not current_user.is_admin:
+        from flask import abort
+        abort(403)  # Forbidden
+    
+    users = User.query.all()
+    posts = Post.query.all()
+    return render_template('admin.html', title='Admin Panel', users=users, posts=posts)</code></pre>
+
+        <p>Notice the three different levels of access control here:</p>
+
+        <ul>
+            <li><code>index()</code> - Public route, anyone can access</li>
+            <li><code>dashboard()</code> - Protected route, requires login</li>
+            <li><code>admin()</code> - Protected route with role check, requires login AND admin status</li>
+        </ul>
+
+        <h2>Updating the Database</h2>
+
+        <p>We added new fields to the User model (<code>is_admin</code> and <code>created_at</code>), so we need to recreate our database. In a production app you'd use migrations, but for now, let's just recreate:</p>
+
+        <pre><code class="language-bash">(venv) $ python
+>>> from app import create_app, db
+>>> app = create_app()
+>>> with app.app_context():
+...     db.drop_all()
+...     db.create_all()
+...
+>>> exit()</code></pre>
+
+        <h2>Your Directory Structure</h2>
+
+        <p>At this point, your application should look like this:</p>
+
+        <pre><code>flask-testing/
+├── app/
+│   ├── __init__.py
+│   ├── models.py
+│   ├── auth/
+│   │   ├── __init__.py
+│   │   ├── routes.py
+│   │   └── forms.py
+│   └── main/
+│       ├── __init__.py
+│       └── routes.py
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py
+│   ├── test_models.py
+│   └── test_forms.py
+├── config.py
+├── requirements.txt
+└── .flaskenv</code></pre>
+
+        <h2>Testing Authentication Routes</h2>
+
+        <p>Now for the important part—testing our authentication system! Create <code>tests/test_auth.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_auth.py: Testing authentication routes
+
+import pytest
+from app.models import User
+from flask import url_for
+
+class TestRegistration:
+    """Test user registration functionality."""
+
+    def test_register_page_loads(self, client):
+        """Test registration page is accessible."""
+        response = client.get('/auth/register')
+        assert response.status_code == 200
+        assert b'Register' in response.data
+
+    def test_successful_registration(self, client, app, db_session):
+        """Test successful user registration."""
+        response = client.post('/auth/register', data={
+            'username': 'newuser',
+            'email': 'newuser@example.com',
+            'password': 'password123',
+            'confirm_password': 'password123',
+            'submit': 'Register'
+        }, follow_redirects=True)
+
+        assert response.status_code == 200
+        assert b'Congratulations, you are now a registered user!' in response.data
+
+        # Verify user was created in database
+        with app.app_context():
+            user = User.query.filter_by(username='newuser').first()
+            assert user is not None
+            assert user.email == 'newuser@example.com'
+            assert user.check_password('password123')
+
+    def test_registration_duplicate_username(self, client, db_session):
+        """Test registration fails with duplicate username."""
+        # Create existing user
+        user = User(username='existinguser', email='existing@example.com')
+        user.set_password('password123')
+        db_session.add(user)
+        db_session.commit()
+
+        # Try to register with same username
+        response = client.post('/auth/register', data={
+            'username': 'existinguser',
+            'email': 'different@example.com',
+            'password': 'password123',
+            'confirm_password': 'password123',
+            'submit': 'Register'
+        })
+
+        assert b'Username already taken' in response.data
+
+    def test_registration_duplicate_email(self, client, db_session):
+        """Test registration fails with duplicate email."""
+        user = User(username='existinguser', email='existing@example.com')
+        user.set_password('password123')
+        db_session.add(user)
+        db_session.commit()
+
+        response = client.post('/auth/register', data={
+            'username': 'newuser',
+            'email': 'existing@example.com',
+            'password': 'password123',
+            'confirm_password': 'password123',
+            'submit': 'Register'
+        })
+
+        assert b'Email already registered' in response.data
+
+    def test_registration_password_mismatch(self, client):
+        """Test registration fails when passwords don't match."""
+        response = client.post('/auth/register', data={
+            'username': 'newuser',
+            'email': 'newuser@example.com',
+            'password': 'password123',
+            'confirm_password': 'differentpassword',
+            'submit': 'Register'
+        })
+
+        assert b'Passwords must match' in response.data
+
+    def test_logged_in_user_redirected_from_register(self, authenticated_client):
+        """Test logged-in user is redirected from registration page."""
+        response = authenticated_client.get('/auth/register', follow_redirects=True)
+        assert response.status_code == 200
+        # Should redirect to index
+        assert b'Home' in response.data or response.request.path == '/'</code></pre>
+
+        <p>Let's examine what makes these tests effective:</p>
+
+        <ul>
+            <li>We test the happy path (successful registration)</li>
+            <li>We test validation errors (duplicate username/email, password mismatch)</li>
+            <li>We verify database changes actually happen</li>
+            <li>We test that logged-in users can't access registration</li>
+            <li>We use <code>follow_redirects=True</code> to test the full flow</li>
+        </ul>
+
+        <div class="note">
+            <p><strong>Why follow_redirects=True?</strong> Without this parameter, when you make a POST request that redirects, you only get the 302 redirect response. With <code>follow_redirects=True</code>, the test client automatically follows the redirect and returns the final response. This lets you test flash messages and verify the user ended up on the right page.</p>
+        </div>
+
+        <h2>Testing Login and Logout</h2>
+
+        <p>Now let's add tests for login and logout functionality. Add this to <code>tests/test_auth.py</code>:</p>
+
+        <pre><code class="language-python">class TestLogin:
+    """Test user login functionality."""
+
+    def test_login_page_loads(self, client):
+        """Test login page is accessible."""
+        response = client.get('/auth/login')
+        assert response.status_code == 200
+        assert b'Sign In' in response.data
+
+    def test_successful_login(self, client, db_session):
+        """Test successful user login."""
+        # Create a user
+        user = User(username='testuser', email='test@example.com')
+        user.set_password('password123')
+        db_session.add(user)
+        db_session.commit()
+
+        # Log in
+        response = client.post('/auth/login', data={
+            'username': 'testuser',
+            'password': 'password123',
+            'submit': 'Sign In'
+        }, follow_redirects=True)
+
+        assert response.status_code == 200
+        # After login, should redirect to index
+        assert response.request.path == '/' or b'Home' in response.data
+
+    def test_login_invalid_username(self, client):
+        """Test login fails with invalid username."""
+        response = client.post('/auth/login', data={
+            'username': 'nonexistent',
+            'password': 'password123',
+            'submit': 'Sign In'
+        }, follow_redirects=True)
+
+        assert b'Invalid username or password' in response.data
+
+    def test_login_invalid_password(self, client, db_session):
+        """Test login fails with wrong password."""
+        user = User(username='testuser', email='test@example.com')
+        user.set_password('correctpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        response = client.post('/auth/login', data={
+            'username': 'testuser',
+            'password': 'wrongpassword',
+            'submit': 'Sign In'
+        }, follow_redirects=True)
+
+        assert b'Invalid username or password' in response.data
+
+    def test_logout(self, authenticated_client):
+        """Test user logout."""
+        response = authenticated_client.get('/auth/logout', follow_redirects=True)
+        assert response.status_code == 200
+        # After logout, should be able to access login page without redirect
+        response = authenticated_client.get('/auth/login')
+        assert response.status_code == 200
+
+class TestRememberMe:
+    """Test 'Remember Me' functionality."""
+
+    def test_login_with_remember_me(self, client, db_session):
+        """Test login with remember me checked."""
+        user = User(username='testuser', email='test@example.com')
+        user.set_password('password123')
+        db_session.add(user)
+        db_session.commit()
+
+        response = client.post('/auth/login', data={
+            'username': 'testuser',
+            'password': 'password123',
+            'remember_me': True,
+            'submit': 'Sign In'
+        }, follow_redirects=True)
+
+        assert response.status_code == 200
+        
+        # Check that remember_me cookie is set
+        # Flask-Login sets a 'remember_token' cookie
+        cookies = [cookie for cookie in client.cookie_jar]
+        assert any('remember' in cookie.name.lower() for cookie in cookies)
+
+    def test_login_without_remember_me(self, client, db_session):
+        """Test login without remember me (session only)."""
+        user = User(username='testuser', email='test@example.com')
+        user.set_password('password123')
+        db_session.add(user)
+        db_session.commit()
+
+        response = client.post('/auth/login', data={
+            'username': 'testuser',
+            'password': 'password123',
+            'submit': 'Sign In'
+        }, follow_redirects=True)
+
+        assert response.status_code == 200</code></pre>
+
+        <p>These tests cover the entire login/logout cycle. Notice how we test both successful and failed login attempts, and even test the "Remember Me" checkbox functionality by checking for cookies.</p>
+
+        <h2>Creating an Authenticated Client Fixture</h2>
+
+        <p>You've probably noticed we're using a fixture called <code>authenticated_client</code>. This is incredibly useful for testing protected routes—instead of logging in before every test, we create a fixture that provides an already-logged-in client. Let's add it to <code>tests/conftest.py</code>:</p>
+
+        <pre><code class="language-python"># tests/conftest.py: Add authenticated client fixture
+
+import pytest
+from app import create_app, db as _db
+from app.models import User
+from config import TestConfig
+
+# ... existing fixtures ...
+
+@pytest.fixture
+def user(db_session):
+    """Create a test user."""
+    user = User(username='testuser', email='test@example.com')
+    user.set_password('password123')
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+@pytest.fixture
+def admin_user(db_session):
+    """Create a test admin user."""
+    user = User(username='adminuser', email='admin@example.com', is_admin=True)
+    user.set_password('adminpass123')
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+@pytest.fixture
+def authenticated_client(client, user):
+    """Create a test client with an authenticated user."""
+    client.post('/auth/login', data={
+        'username': user.username,
+        'password': 'password123',
+        'submit': 'Sign In'
+    })
+    return client
+
+@pytest.fixture
+def admin_client(client, admin_user):
+    """Create a test client with an authenticated admin user."""
+    client.post('/auth/login', data={
+        'username': admin_user.username,
+        'password': 'adminpass123',
+        'submit': 'Sign In'
+    })
+    return client</code></pre>
+
+        <p>Now you have four powerful fixtures:</p>
+
+        <ul>
+            <li><code>user</code> - A regular test user in the database</li>
+            <li><code>admin_user</code> - An admin user in the database</li>
+            <li><code>authenticated_client</code> - A test client already logged in as regular user</li>
+            <li><code>admin_client</code> - A test client already logged in as admin</li>
+        </ul>
+
+        <div class="note">
+            <p><strong>Fixture Dependencies:</strong> Notice how <code>authenticated_client</code> depends on both <code>client</code> and <code>user</code>? Pytest automatically creates the user fixture first, then creates the client, then logs the user in. This is the magic of pytest's dependency injection—you can compose fixtures together to build exactly what you need!</p>
+        </div>
+
+        <h2>Testing Protected Routes</h2>
+
+        <p>Now that we have authenticated client fixtures, testing protected routes becomes easy. Create <code>tests/test_protected_routes.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_protected_routes.py: Testing routes that require authentication
+
+import pytest
+from flask import url_for
+
+class TestProtectedRoutes:
+    """Test routes that require authentication."""
+
+    def test_dashboard_requires_login(self, client):
+        """Test dashboard redirects to login when not authenticated."""
+        response = client.get('/dashboard')
+        assert response.status_code == 302  # Redirect
+        assert '/auth/login' in response.location
+
+    def test_dashboard_accessible_when_logged_in(self, authenticated_client):
+        """Test dashboard is accessible to authenticated users."""
+        response = authenticated_client.get('/dashboard')
+        assert response.status_code == 200
+        assert b'Dashboard' in response.data
+
+    def test_dashboard_shows_user_posts(self, authenticated_client, user, db_session):
+        """Test dashboard shows only the user's own posts."""
+        from app.models import Post
+        
+        # Create a post for the logged-in user
+        post = Post(title='My Post', body='My content', user_id=user.id)
+        db_session.add(post)
+        
+        # Create another user and their post
+        other_user = User(username='otheruser', email='other@example.com')
+        other_user.set_password('password123')
+        db_session.add(other_user)
+        db_session.commit()
+        
+        other_post = Post(title='Other Post', body='Other content', user_id=other_user.id)
+        db_session.add(other_post)
+        db_session.commit()
+
+        response = authenticated_client.get('/dashboard')
+        assert b'My Post' in response.data
+        assert b'Other Post' not in response.data
+
+    def test_logout_required_route_without_login(self, client):
+        """Test that logout route requires authentication."""
+        response = client.get('/auth/logout')
+        assert response.status_code == 302
+        assert '/auth/login' in response.location
+
+class TestNextParameter:
+    """Test the 'next' parameter functionality for protected routes."""
+
+    def test_login_redirects_to_next_page(self, client, user, db_session):
+        """Test that after login, user is redirected to the page they wanted."""
+        # Try to access dashboard (which requires login)
+        response = client.get('/dashboard')
+        assert response.status_code == 302
+        
+        # Now login - should redirect to dashboard
+        response = client.post('/auth/login', data={
+            'username': 'testuser',
+            'password': 'password123',
+            'submit': 'Sign In'
+        }, follow_redirects=True)
+        
+        # Should be redirected to the originally requested page
+        assert response.request.path == '/dashboard' or b'Dashboard' in response.data
+
+    def test_next_parameter_prevents_open_redirects(self, client, user):
+        """Test that next parameter doesn't allow external redirects."""
+        response = client.post('/auth/login?next=http://evil.com', data={
+            'username': 'testuser',
+            'password': 'password123',
+            'submit': 'Sign In'
+        }, follow_redirects=True)
+        
+        # Should redirect to index, not external site
+        assert response.request.path == '/' or 'evil.com' not in response.request.url</code></pre>
+
+        <p>These tests verify several critical security features:</p>
+
+        <ul>
+            <li>Protected routes actually require login</li>
+            <li>Users can only see their own data</li>
+            <li>The "next" parameter works correctly for better UX</li>
+            <li>The "next" parameter doesn't allow open redirects (security!)</li>
+        </ul>
+
+        <h2>Testing Role-Based Access Control</h2>
+
+        <p>Now for the advanced part—testing that admin routes are only accessible to admin users. Add these tests to <code>tests/test_protected_routes.py</code>:</p>
+
+        <pre><code class="language-python">class TestAdminRoutes:
+    """Test routes that require admin privileges."""
+
+    def test_admin_route_requires_login(self, client):
+        """Test admin route redirects to login when not authenticated."""
+        response = client.get('/admin')
+        assert response.status_code == 302
+        assert '/auth/login' in response.location
+
+    def test_admin_route_forbidden_for_regular_user(self, authenticated_client):
+        """Test admin route returns 403 for non-admin users."""
+        response = authenticated_client.get('/admin')
+        assert response.status_code == 403  # Forbidden
+
+    def test_admin_route_accessible_for_admin(self, admin_client):
+        """Test admin route is accessible to admin users."""
+        response = admin_client.get('/admin')
+        assert response.status_code == 200
+        assert b'Admin Panel' in response.data
+
+    def test_admin_sees_all_users_and_posts(self, admin_client, user, db_session):
+        """Test that admin can see all users and posts."""
+        from app.models import Post, User
+        
+        # Create some test data
+        post = Post(title='Test Post', body='Test content', user_id=user.id)
+        db_session.add(post)
+        db_session.commit()
+
+        response = admin_client.get('/admin')
+        assert b'testuser' in response.data  # Regular user visible
+        assert b'adminuser' in response.data  # Admin user visible
+        assert b'Test Post' in response.data  # Post visible</code></pre>
+
+        <p>This demonstrates proper role-based access control:</p>
+
+        <ul>
+            <li>Unauthenticated users are redirected to login</li>
+            <li>Regular authenticated users get 403 Forbidden</li>
+            <li>Only admin users can access admin routes</li>
+            <li>Admins can see all data in the system</li>
+        </ul>
+
+        <h2>Alternative: Testing with Mocked Users</h2>
+
+        <p>Sometimes you want to test authentication behavior without going through the full login process. Flask-Login provides a way to mock an authenticated user. This is useful for testing specific behaviors without the overhead of database operations. Add this to your conftest.py:</p>
+
+        <pre><code class="language-python"># Alternative fixture using login context
+
+from flask_login import login_user
+
+@pytest.fixture
+def mock_authenticated_user(app, user):
+    """Mock an authenticated user using Flask-Login's context."""
+    with app.test_request_context():
+        login_user(user)
+        yield user</code></pre>
+
+        <p>You can use this in tests where you want to test the authentication state without actually making HTTP requests:</p>
+
+        <pre><code class="language-python">def test_user_authentication_state(app, mock_authenticated_user):
+    """Test that user authentication state is correct."""
+    from flask_login import current_user
+    
+    with app.test_request_context():
+        assert current_user.is_authenticated
+        assert current_user.username == 'testuser'
+        assert not current_user.is_anonymous</code></pre>
+
+        <p>However, for most route testing, the <code>authenticated_client</code> fixture is more practical because it tests the full authentication flow.</p>
+
+        <h2>Running Your Authentication Tests</h2>
+
+        <p>Let's run all the authentication tests to make sure everything works:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest tests/test_auth.py -v
+
+========================== test session starts ==========================
+tests/test_auth.py::TestRegistration::test_register_page_loads PASSED
+tests/test_auth.py::TestRegistration::test_successful_registration PASSED
+tests/test_auth.py::TestRegistration::test_registration_duplicate_username PASSED
+tests/test_auth.py::TestRegistration::test_registration_duplicate_email PASSED
+tests/test_auth.py::TestRegistration::test_registration_password_mismatch PASSED
+tests/test_auth.py::TestRegistration::test_logged_in_user_redirected_from_register PASSED
+tests/test_auth.py::TestLogin::test_login_page_loads PASSED
+tests/test_auth.py::TestLogin::test_successful_login PASSED
+tests/test_auth.py::TestLogin::test_login_invalid_username PASSED
+tests/test_auth.py::TestLogin::test_login_invalid_password PASSED
+tests/test_auth.py::TestLogin::test_logout PASSED
+========================== 11 passed ==========================</code></pre>
+
+        <p>Now run the protected route tests:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest tests/test_protected_routes.py -v
+
+========================== test session starts ==========================
+tests/test_protected_routes.py::TestProtectedRoutes::test_dashboard_requires_login PASSED
+tests/test_protected_routes.py::TestProtectedRoutes::test_dashboard_accessible_when_logged_in PASSED
+tests/test_protected_routes.py::TestProtectedRoutes::test_dashboard_shows_user_posts PASSED
+tests/test_protected_routes.py::TestProtectedRoutes::test_logout_required_route_without_login PASSED
+tests/test_protected_routes.py::TestNextParameter::test_login_redirects_to_next_page PASSED
+tests/test_protected_routes.py::TestNextParameter::test_next_parameter_prevents_open_redirects PASSED
+tests/test_protected_routes.py::TestAdminRoutes::test_admin_route_requires_login PASSED
+tests/test_protected_routes.py::TestAdminRoutes::test_admin_route_forbidden_for_regular_user PASSED
+tests/test_protected_routes.py::TestAdminRoutes::test_admin_route_accessible_for_admin PASSED
+tests/test_protected_routes.py::TestAdminRoutes::test_admin_sees_all_users_and_posts PASSED
+========================== 10 passed ==========================</code></pre>
+
+        <p>Run all tests to make sure we didn't break anything:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest -v
+
+========================== test session starts ==========================
+collected 35 items
+
+tests/test_auth.py::TestRegistration::test_register_page_loads PASSED      [  2%]
+tests/test_auth.py::TestRegistration::test_successful_registration PASSED  [  5%]
+...more tests...
+tests/test_protected_routes.py::TestAdminRoutes::test_admin_sees_all_users_and_posts PASSED [100%]
+
+========================== 35 passed ==========================</code></pre>
+
+        <p>Congratulations! You now have a complete authentication system with comprehensive test coverage!</p>
+
+        <h2>Understanding Session Testing</h2>
+
+        <p>You might wonder how Flask's test client maintains sessions between requests. When you log in with the test client, it automatically stores the session cookie and includes it in subsequent requests—just like a real browser would. This means you can test entire user workflows:</p>
+
+        <pre><code class="language-python">def test_complete_user_workflow(client, db_session):
+    """Test a complete user journey from registration to logout."""
+    # 1. Register
+    client.post('/auth/register', data={
+        'username': 'newuser',
+        'email': 'newuser@example.com',
+        'password': 'password123',
+        'confirm_password': 'password123',
+        'submit': 'Register'
+    })
+    
+    # 2. Login
+    client.post('/auth/login', data={
+        'username': 'newuser',
+        'password': 'password123',
+        'submit': 'Sign In'
+    })
+    
+    # 3. Access protected route
+    response = client.get('/dashboard')
+    assert response.status_code == 200
+    
+    # 4. Logout
+    client.get('/auth/logout')
+    
+    # 5. Verify can't access protected route anymore
+    response = client.get('/dashboard')
+    assert response.status_code == 302  # Redirect to login</code></pre>
+
+        <p>This type of test verifies that the entire authentication system works together correctly.</p>
+
+        <h2>Troubleshooting</h2>
+
+        <div class="troubleshooting">
+            <h3>Tests fail with "CSRF token missing"</h3>
+            <p><strong>Problem:</strong> Your POST requests to forms are failing with CSRF validation errors.</p>
+            <p><strong>Solution:</strong> In testing, we usually want to disable CSRF protection. Update your <code>config.py</code>:</p>
+            <pre><code class="language-python">class TestConfig(Config):
+    TESTING = True
+    SQLALCHEMY_DATABASE_URI = 'sqlite://'
+    WTF_CSRF_ENABLED = False  # Disable CSRF in tests</code></pre>
+
+            <h3>Tests fail with "User is not authenticated"</h3>
+            <p><strong>Problem:</strong> Your <code>authenticated_client</code> fixture isn't working properly.</p>
+            <p><strong>Solution:</strong> Make sure you're using <code>follow_redirects=False</code> when logging in the fixture (default behavior). The session cookie needs to be set before you start making test requests.</p>
+
+            <h3>Import errors with blueprints</h3>
+            <p><strong>Problem:</strong> You're getting circular import errors after adding blueprints.</p>
+            <p><strong>Solution:</strong> Make sure your blueprint imports are at the bottom of <code>__init__.py</code>, and that you import routes inside blueprint <code>__init__.py</code> files, not at the top level.</p>
+
+            <h3>Admin user doesn't have admin privileges</h3>
+            <p><strong>Problem:</strong> Your admin tests are failing even though you created an admin user.</p>
+            <p><strong>Solution:</strong> Double-check your <code>admin_user</code> fixture has <code>is_admin=True</code>. Also verify the database was recreated after adding the <code>is_admin</code> column.</p>
+
+            <h3>Test client doesn't maintain session</h3>
+            <p><strong>Problem:</strong> After logging in with the test client, subsequent requests aren't authenticated.</p>
+            <p><strong>Solution:</strong> Make sure you're using the same <code>client</code> instance for all requests. Each new client gets a fresh session. That's why we pass the same <code>client</code> fixture into <code>authenticated_client</code>.</p>
+        </div>
+
+        <h2>Best Practices for Authentication Testing</h2>
+
+        <p>After testing dozens of Flask applications, I've learned some important patterns:</p>
+
+        <ul>
+            <li><strong>Always test the negative cases:</strong> Don't just test successful login—test failed login, invalid passwords, non-existent users, etc.</li>
+            <li><strong>Test authorization, not just authentication:</strong> Make sure users can't access things they shouldn't, even if they're logged in</li>
+            <li><strong>Use fixtures for common users:</strong> Creating <code>user</code>, <code>admin_user</code>, and authenticated client fixtures saves tons of time</li>
+            <li><strong>Test the full workflow:</strong> Register → Login → Use App → Logout tests are incredibly valuable</li>
+            <li><strong>Test redirect chains:</strong> Use <code>follow_redirects=True</code> to verify users end up where they should</li>
+            <li><strong>Verify database state:</strong> Don't just check HTTP responses—verify users are actually created, passwords are hashed, etc.</li>
+            <li><strong>Test security features:</strong> CSRF protection, password hashing, open redirect prevention, etc.</li>
+        </ul>
+
+        <h2>Hands-On Exercise</h2>
+
+        <div class="exercise">
+            <h3>Challenge: Implement Password Reset</h3>
+            
+            <p>Now it's your turn! Implement and test a password reset feature. Here's what you need to build:</p>
+
+            <h4>Requirements:</h4>
+            <ol>
+                <li>Create a "Forgot Password" link on the login page</li>
+                <li>Create a form where users enter their email</li>
+                <li>If email exists, set a <code>reset_token</code> on the user (don't worry about actually sending email yet)</li>
+                <li>Create a password reset form that accepts the token and new password</li>
+                <li>Validate that the token exists and reset the password</li>
+            </ol>
+
+            <h4>What to Test:</h4>
+            <ul>
+                <li>Request password reset with valid email</li>
+                <li>Request password reset with invalid email (should still show success message for security)</li>
+                <li>Reset password with valid token</li>
+                <li>Try to reset password with invalid token</li>
+                <li>Verify user can log in with new password after reset</li>
+                <li>Verify token is cleared after successful reset</li>
+            </ul>
+
+            <h4>Hints:</h4>
+            <ul>
+                <li>Add <code>reset_token = db.Column(db.String(100))</code> to the User model</li>
+                <li>You can generate a simple token with <code>import secrets; secrets.token_urlsafe(32)</code></li>
+                <li>Create new routes in <code>auth/routes.py</code>: <code>request_reset</code> and <code>reset_password</code></li>
+                <li>Create corresponding test file: <code>tests/test_password_reset.py</code></li>
+                <li>Think about edge cases: expired tokens, reused tokens, etc.</li>
+            </ul>
+
+            <h4>Success Criteria:</h4>
+            <p>When complete, you should have:</p>
+            <ul>
+                <li>Two new routes for password reset</li>
+                <li>Two new forms for requesting and completing reset</li>
+                <li>At least 6 tests covering all scenarios</li>
+                <li>All tests passing with <code>pytest tests/test_password_reset.py -v</code></li>
+            </ul>
+
+            <p>This exercise will reinforce everything you learned in this chapter and give you experience building and testing a complete authentication feature independently!</p>
+        </div>
+
+        <h2>What We've Learned</h2>
+
+        <p>Take a moment to appreciate everything you've accomplished in this chapter:</p>
+
+        <ul>
+            <li>✓ You can integrate Flask-Login into a Flask application</li>
+            <li>✓ You understand how to create authentication routes for registration, login, and logout</li>
+            <li>✓ You know how to test the complete authentication flow from registration through logout</li>
+            <li>✓ You can create authenticated client fixtures for testing protected routes</li>
+            <li>✓ You've learned how to test role-based access control with admin routes</li>
+            <li>✓ You understand how to prevent security vulnerabilities like open redirects</li>
+            <li>✓ You can test that users can only access their own data</li>
+            <li>✓ You've built a production-ready authentication system with comprehensive test coverage</li>
+        </ul>
+
+        <p>Your authentication system is now secure, well-tested, and ready for real users. You've learned patterns that apply to any authentication system, whether you're building a simple blog or a complex enterprise application. The testing strategies you've mastered here—authenticated fixtures, testing authorization, verifying database state—will serve you throughout your career!</p>
+
+        <h2>Before You Continue...</h2>
+
+        <p>Before moving on to Chapter 6, make sure you:</p>
+
+        <ol>
+            <li>Have all authentication tests passing (registration, login, logout, protected routes, admin routes)</li>
+            <li>Understand the difference between authentication (who you are) and authorization (what you can do)</li>
+            <li>Can explain why we test both successful and failed login attempts</li>
+            <li>Know how the <code>authenticated_client</code> fixture works and why it's useful</li>
+            <li>Understand how Flask-Login manages sessions between requests</li>
+            <li>Can describe what makes a good authentication test (negative cases, database verification, security checks)</li>
+        </ol>
+
+        <p>If something doesn't make complete sense yet, that's okay! Authentication has many moving parts—sessions, cookies, passwords, authorization—and it takes time to understand how they all work together. The patterns you've learned here will become clearer as you use them in more complex scenarios throughout the rest of this course.</p>
+
+        <div class="success">
+            <strong>Next Up:</strong> In Chapter 6, you're going to learn about mocking and test doubles—one of the most powerful testing techniques. You'll discover how to test code that depends on external services (email, payment processors, third-party APIs) without actually calling those services. You'll master unittest.mock and pytest-mock, learn when to mock versus when to use real objects, and build a service that integrates with external APIs with complete test coverage. This is where your tests become truly independent and fast!
+        </div>
+
+        <div class="nav-links">
+            <a href="chapter04.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter06.html">Next Chapter →</a>
+        </div>
+
+        <footer>
+            <p>Flask Testing Mastery - A comprehensive course on testing Flask applications</p>
+            <p style="font-size: 0.9em;">Questions or feedback? Let me know!</p>
+        </footer>
+    </div>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 6: Mocking and Test Doubles - Flask Testing Mastery</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/prism.css">
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="chapter05.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter07.html">Next Chapter →</a>
+        </div>
+
+        <h1>Chapter 6: Mocking and Test Doubles</h1>
+        <p class="chapter-subtitle">Isolating tests from external dependencies with unittest.mock and pytest-mock</p>
+
+        <div class="github-links">
+            <span class="github-label">Chapter Code:</span>
+            <a href="https://github.com/goodkent/flask-testing/tree/ch06-end" class="github-link">Browse</a>
+            <a href="https://github.com/goodkent/flask-testing/archive/refs/tags/ch06-end.zip" class="github-link">Zip</a>
+            <a href="https://github.com/goodkent/flask-testing/compare/ch05-end...ch06-end" class="github-link">Diff</a>
+        </div>
+
+        <div class="intro-section">
+            <p>Welcome back! In Chapter 5, you built a complete authentication system with registration, login, and role-based access control. Your tests work great—they verify that users can register, log in, and access protected routes. But there's a problem lurking beneath the surface: what happens when your application needs to send email notifications, call external APIs, or integrate with payment processors?</p>
+
+            <p>Imagine you want to send a welcome email when users register. Should your tests actually send real emails? What if you need to verify a user's email address with a third-party API? Should your tests make real API calls? What about testing payment processing—you certainly don't want to charge real credit cards during testing! These are all situations where <strong>mocking</strong> becomes essential.</p>
+
+            <p>Mocking is one of the most powerful testing techniques you'll learn. It allows you to test code that depends on external services without actually calling those services. Your tests become faster (no waiting for network calls), more reliable (no flaky tests when APIs are down), and safer (no accidental charges or emails sent during testing). But mocking is also one of the most misunderstood testing techniques—it's easy to over-mock or under-mock, leading to tests that pass but don't actually verify your code works correctly.</p>
+
+            <p>In this chapter, you're going to learn how to mock effectively. You'll add email notifications to FlaskBlog Pro, integrate with an external weather API, and learn when to mock versus when to use real objects. By the end, you'll understand the different types of test doubles (mocks, stubs, fakes), master both <code>unittest.mock</code> and <code>pytest-mock</code>, and know exactly when mocking is appropriate. You'll build a service that integrates with external APIs with complete test coverage—all without making a single real API call during testing.</p>
+        </div>
+
+        <h2>Learning Objectives</h2>
+        <ul>
+            <li>Understand what mocking is and why it's necessary</li>
+            <li>Learn the difference between mocks, stubs, fakes, and other test doubles</li>
+            <li>Master unittest.mock for creating mock objects</li>
+            <li>Use pytest-mock for cleaner mocking in pytest</li>
+            <li>Mock external API calls and verify they're called correctly</li>
+            <li>Mock email services to test notification features</li>
+            <li>Know when to mock and when to use real implementations</li>
+        </ul>
+
+        <h2>What Is Mocking?</h2>
+
+        <p>Before we dive into code, let's make sure we understand what mocking actually is. A <strong>mock</strong> is a fake object that stands in for a real object during testing. Instead of calling a real API, sending a real email, or hitting a real database, your code calls the mock object—which pretends to be the real thing but doesn't actually do anything.</p>
+
+        <p>Let's look at a simple example to make this concrete. Imagine you have a function that sends a welcome email:</p>
+
+        <pre><code class="language-python"># app/email.py: Sending a welcome email
+
+import smtplib
+from email.mime.text import MIMEText
+
+def send_welcome_email(user_email, username):
+    """Send welcome email to new user."""
+    msg = MIMEText(f"Welcome to FlaskBlog Pro, {username}!")
+    msg['Subject'] = 'Welcome to FlaskBlog Pro!'
+    msg['From'] = 'noreply@flaskblog.com'
+    msg['To'] = user_email
+    
+    with smtplib.SMTP('localhost', 1025) as smtp:
+        smtp.send_message(msg)
+    
+    return True</code></pre>
+
+        <p>How would you test this? You could set up a real SMTP server, send a real email, and then somehow verify the email arrived. But that's complicated, slow, and brittle. What if the SMTP server is down? What if there's a network issue? Your tests would fail even though your code is correct.</p>
+
+        <p>With mocking, you replace <code>smtplib.SMTP</code> with a mock object. Your code still calls <code>SMTP()</code> and <code>send_message()</code>, but instead of actually sending an email, the mock object just records that it was called. You can then verify that your code tried to send an email with the right parameters. Here's what the test looks like:</p>
+
+        <pre><code class="language-python"># tests/test_email.py: Testing email sending with mocking
+
+from unittest.mock import patch, MagicMock
+from app.email import send_welcome_email
+
+def test_send_welcome_email():
+    """Test that welcome email is sent with correct content."""
+    # Replace smtplib.SMTP with a mock
+    with patch('app.email.smtplib.SMTP') as mock_smtp:
+        # Configure the mock
+        mock_smtp_instance = MagicMock()
+        mock_smtp.return_value.__enter__.return_value = mock_smtp_instance
+        
+        # Call the function
+        result = send_welcome_email('test@example.com', 'Alice')
+        
+        # Verify the mock was called correctly
+        mock_smtp.assert_called_once_with('localhost', 1025)
+        mock_smtp_instance.send_message.assert_called_once()
+        
+        # Verify the function returned True
+        assert result == True</code></pre>
+
+        <p>This test verifies that <code>send_welcome_email</code> tries to connect to the SMTP server and send a message—without actually doing either of those things. That's the power of mocking!</p>
+
+        <h2>Types of Test Doubles</h2>
+
+        <p>Before we go further, you should know that "mock" is actually a specific type of test double. A <strong>test double</strong> is any object that stands in for a real object during testing. There are several types, and understanding the differences will help you communicate clearly with other developers and write better tests.</p>
+
+        <ul>
+            <li><strong>Stub:</strong> Returns hardcoded responses but doesn't verify how it's used. Example: A database query that always returns the same user.</li>
+            <li><strong>Mock:</strong> Records how it's called and can verify those calls. Example: Verifying an API was called with specific parameters.</li>
+            <li><strong>Fake:</strong> A working implementation with shortcuts. Example: An in-memory database instead of a real one (we used this in Chapter 3!).</li>
+            <li><strong>Spy:</strong> Wraps a real object and records calls to it. Example: Recording which methods were called on a real service.</li>
+            <li><strong>Dummy:</strong> Passed around but never actually used. Example: A parameter required by a function but ignored in the test.</li>
+        </ul>
+
+        <p>In practice, people often say "mock" to refer to any test double, and that's fine—just be aware that there are technical distinctions. Python's <code>unittest.mock</code> library can create all of these types, and it's called "mock" because that's the most common use case.</p>
+
+        <h2>Installing pytest-mock</h2>
+
+        <p>Python comes with <code>unittest.mock</code> built-in, and it's powerful—but the syntax can be awkward in pytest. The <code>pytest-mock</code> plugin provides a cleaner interface that works better with pytest's fixture system. Let's install it:</p>
+
+        <pre><code class="language-bash">(venv) $ pip install pytest-mock
+(venv) $ pip freeze > requirements.txt</code></pre>
+
+        <p>Now you'll have access to the <code>mocker</code> fixture in your tests, which provides a simpler way to create mocks.</p>
+
+        <h2>Adding Email Notifications</h2>
+
+        <p>Let's add a real feature to FlaskBlog Pro that requires mocking: email notifications when users register. First, we'll create an email utility module:</p>
+
+        <pre><code class="language-python"># app/email.py: Email notification service
+
+import smtplib
+from email.mime.text import MIMEText
+from flask import current_app
+
+def send_email(subject, recipient, body):
+    """Send an email using SMTP."""
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = current_app.config.get('MAIL_FROM', 'noreply@flaskblog.com')
+    msg['To'] = recipient
+    
+    smtp_host = current_app.config.get('MAIL_SERVER', 'localhost')
+    smtp_port = current_app.config.get('MAIL_PORT', 1025)
+    
+    with smtplib.SMTP(smtp_host, smtp_port) as smtp:
+        smtp.send_message(msg)
+    
+    return True
+
+def send_welcome_email(user):
+    """Send welcome email to newly registered user."""
+    subject = 'Welcome to FlaskBlog Pro!'
+    body = f"""
+Hello {user.username}!
+
+Thank you for registering with FlaskBlog Pro. Your account has been created successfully.
+
+Start exploring and sharing your thoughts with the community!
+
+Best regards,
+The FlaskBlog Pro Team
+"""
+    return send_email(subject, user.email, body)</code></pre>
+
+        <p>This module defines two functions: <code>send_email</code> handles the actual SMTP connection, and <code>send_welcome_email</code> composes the welcome message. Notice how we're using Flask's application config to make the SMTP settings configurable—this will be important for testing!</p>
+
+        <p>Now let's update the registration route to send a welcome email. Open <code>app/auth/routes.py</code> and modify the register route:</p>
+
+        <pre><code class="language-python"># app/auth/routes.py: Add email notification to registration
+
+from flask import render_template, redirect, url_for, flash, request
+from flask_login import login_user, logout_user, current_user, login_required
+from app import db
+from app.auth import bp
+from app.auth.forms import RegistrationForm, LoginForm
+from app.models import User
+from app.email import send_welcome_email
+
+@bp.route('/register', methods=['GET', 'POST'])
+def register():
+    """Handle user registration."""
+    if current_user.is_authenticated:
+        return redirect(url_for('main.index'))
+    
+    form = RegistrationForm()
+    if form.validate_on_submit():
+        user = User(username=form.username.data, email=form.email.data)
+        user.set_password(form.password.data)
+        db.session.add(user)
+        db.session.commit()
+        
+        # Send welcome email
+        try:
+            send_welcome_email(user)
+            flash('Registration successful! Check your email for a welcome message.', 'success')
+        except Exception as e:
+            # Log the error but don't fail registration
+            current_app.logger.error(f'Failed to send welcome email: {e}')
+            flash('Registration successful! (Email notification failed)', 'success')
+        
+        return redirect(url_for('auth.login'))
+    
+    return render_template('auth/register.html', title='Register', form=form)</code></pre>
+
+        <p>Notice the try/except block around email sending—we don't want registration to fail just because email doesn't work. This is a common pattern: external services should be "fire and forget" for critical operations like registration.</p>
+
+        <h2>Testing Email Without Mocking (The Wrong Way)</h2>
+
+        <p>Before we learn the right way to test this, let's see why testing without mocking is problematic. Here's what a test might look like if we tried to test real email sending:</p>
+
+        <pre><code class="language-python"># tests/test_auth.py: Testing email the wrong way (DO NOT DO THIS!)
+
+def test_registration_sends_email_wrong_way(client, app):
+    """This test is slow, brittle, and requires external setup."""
+    # This test would require:
+    # 1. A real SMTP server running
+    # 2. Some way to check the SMTP server's mail queue
+    # 3. Cleanup of sent emails between tests
+    # 4. Network access during testing
+    
+    response = client.post('/auth/register', data={
+        'username': 'testuser',
+        'email': 'test@example.com',
+        'password': 'SecurePass123!',
+        'password2': 'SecurePass123!'
+    }, follow_redirects=True)
+    
+    assert response.status_code == 200
+    
+    # How do we verify the email was sent???
+    # - Check SMTP server's mailbox? (requires external tools)
+    # - Query a database? (adds more dependencies)
+    # - Wait and hope? (non-deterministic)
+    
+    # This is why we need mocking!</code></pre>
+
+        <p>This approach has serious problems: it's slow (network calls take time), brittle (fails if the SMTP server is down), requires external setup (you need a test SMTP server), and is hard to verify (how do you check that an email was sent?). Don't do this!</p>
+
+        <h2>Testing Email With Mocking (The Right Way)</h2>
+
+        <p>Now let's write the test correctly using pytest-mock. The <code>mocker</code> fixture makes this much cleaner than using <code>unittest.mock</code> directly:</p>
+
+        <pre><code class="language-python"># tests/test_email.py: Testing email sending with mocking
+
+import pytest
+from app import create_app, db
+from app.models import User
+from app.email import send_email, send_welcome_email
+
+@pytest.fixture
+def app():
+    """Create application for testing."""
+    app = create_app('testing')
+    
+    with app.app_context():
+        db.create_all()
+        yield app
+        db.session.remove()
+        db.drop_all()
+
+def test_send_email(app, mocker):
+    """Test that send_email calls SMTP correctly."""
+    # Mock smtplib.SMTP
+    mock_smtp = mocker.patch('app.email.smtplib.SMTP')
+    mock_smtp_instance = mock_smtp.return_value.__enter__.return_value
+    
+    with app.app_context():
+        result = send_email(
+            subject='Test Subject',
+            recipient='test@example.com',
+            body='Test body'
+        )
+    
+    # Verify SMTP was called with correct parameters
+    mock_smtp.assert_called_once_with('localhost', 1025)
+    
+    # Verify send_message was called
+    mock_smtp_instance.send_message.assert_called_once()
+    
+    # Verify the email message was constructed correctly
+    call_args = mock_smtp_instance.send_message.call_args
+    msg = call_args[0][0]  # Get the first positional argument
+    
+    assert msg['Subject'] == 'Test Subject'
+    assert msg['To'] == 'test@example.com'
+    assert 'Test body' in str(msg)
+    assert result == True
+
+def test_send_welcome_email(app, mocker):
+    """Test that welcome email is sent to new users."""
+    # Mock the send_email function instead of SMTP
+    mock_send = mocker.patch('app.email.send_email')
+    mock_send.return_value = True
+    
+    with app.app_context():
+        user = User(username='alice', email='alice@example.com')
+        user.set_password('password')
+        db.session.add(user)
+        db.session.commit()
+        
+        result = send_welcome_email(user)
+    
+    # Verify send_email was called with correct parameters
+    mock_send.assert_called_once()
+    call_args = mock_send.call_args
+    
+    assert call_args[1]['subject'] == 'Welcome to FlaskBlog Pro!'
+    assert call_args[1]['recipient'] == 'alice@example.com'
+    assert 'alice' in call_args[1]['body']
+    assert 'Thank you for registering' in call_args[1]['body']
+    assert result == True</code></pre>
+
+        <p>Let's break down what's happening here:</p>
+
+        <ul>
+            <li><code>mocker.patch('app.email.smtplib.SMTP')</code> replaces the SMTP class with a mock</li>
+            <li><code>mock_smtp.return_value.__enter__.return_value</code> gives us the instance returned by the context manager (the <code>with</code> statement)</li>
+            <li><code>assert_called_once_with()</code> verifies the mock was called exactly once with specific arguments</li>
+            <li>We can inspect <code>call_args</code> to verify the exact parameters passed to mocked functions</li>
+        </ul>
+
+        <p>In <code>test_send_welcome_email</code>, notice that we're mocking at a different level—we're mocking <code>send_email</code> instead of <code>smtplib.SMTP</code>. This is a key principle: <strong>mock at the right level of abstraction</strong>. We don't need to test SMTP again; we just want to verify that <code>send_welcome_email</code> calls <code>send_email</code> with the right parameters.</p>
+
+        <h2>Testing the Registration Route With Email</h2>
+
+        <p>Now let's update the registration test to verify that the welcome email is sent. We'll add this to <code>tests/test_auth.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_auth.py: Testing registration with email notification
+
+def test_registration_sends_welcome_email(client, app, mocker):
+    """Test that registration sends a welcome email."""
+    # Mock send_welcome_email
+    mock_send = mocker.patch('app.auth.routes.send_welcome_email')
+    mock_send.return_value = True
+    
+    response = client.post('/auth/register', data={
+        'username': 'newuser',
+        'email': 'newuser@example.com',
+        'password': 'SecurePass123!',
+        'password2': 'SecurePass123!'
+    }, follow_redirects=True)
+    
+    assert response.status_code == 200
+    assert b'Registration successful!' in response.data
+    assert b'Check your email' in response.data
+    
+    # Verify send_welcome_email was called
+    mock_send.assert_called_once()
+    
+    # Verify it was called with the right user
+    call_args = mock_send.call_args
+    user = call_args[0][0]  # First positional argument
+    assert user.username == 'newuser'
+    assert user.email == 'newuser@example.com'
+
+def test_registration_succeeds_even_if_email_fails(client, app, mocker):
+    """Test that registration still works if email sending fails."""
+    # Mock send_welcome_email to raise an exception
+    mock_send = mocker.patch('app.auth.routes.send_welcome_email')
+    mock_send.side_effect = Exception('SMTP server unavailable')
+    
+    response = client.post('/auth/register', data={
+        'username': 'newuser',
+        'email': 'newuser@example.com',
+        'password': 'SecurePass123!',
+        'password2': 'SecurePass123!'
+    }, follow_redirects=True)
+    
+    # Registration should still succeed
+    assert response.status_code == 200
+    assert b'Registration successful!' in response.data
+    assert b'Email notification failed' in response.data
+    
+    # User should exist in database
+    with app.app_context():
+        user = User.query.filter_by(username='newuser').first()
+        assert user is not None
+        assert user.email == 'newuser@example.com'</code></pre>
+
+        <p>The second test is particularly important—it verifies that registration still succeeds even when email fails. We use <code>side_effect</code> to make the mock raise an exception, simulating an SMTP server failure. This kind of test is crucial for building resilient applications!</p>
+
+        <h2>Mocking External API Calls</h2>
+
+        <p>Email is one type of external dependency, but APIs are even more common. Let's add a feature that calls an external weather API to show current weather on user profiles. This will teach you how to mock HTTP requests.</p>
+
+        <p>First, install the <code>requests</code> library:</p>
+
+        <pre><code class="language-bash">(venv) $ pip install requests
+(venv) $ pip freeze > requirements.txt</code></pre>
+
+        <p>Now create a service that calls a weather API:</p>
+
+        <pre><code class="language-python"># app/services/weather.py: External API service
+
+import requests
+from flask import current_app
+
+class WeatherService:
+    """Service for fetching weather data from external API."""
+    
+    def __init__(self):
+        self.api_key = current_app.config.get('WEATHER_API_KEY', 'demo_key')
+        self.base_url = 'https://api.weather.example.com/v1'
+    
+    def get_current_weather(self, city):
+        """Get current weather for a city."""
+        try:
+            response = requests.get(
+                f'{self.base_url}/current',
+                params={'q': city, 'key': self.api_key},
+                timeout=5
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            return {
+                'city': city,
+                'temperature': data['temp_c'],
+                'condition': data['condition']['text'],
+                'icon': data['condition']['icon']
+            }
+        except requests.RequestException as e:
+            current_app.logger.error(f'Weather API error: {e}')
+            return None
+    
+    def get_forecast(self, city, days=3):
+        """Get weather forecast for a city."""
+        try:
+            response = requests.get(
+                f'{self.base_url}/forecast',
+                params={'q': city, 'key': self.api_key, 'days': days},
+                timeout=5
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            return {
+                'city': city,
+                'forecast': [
+                    {
+                        'date': day['date'],
+                        'max_temp': day['day']['maxtemp_c'],
+                        'min_temp': day['day']['mintemp_c'],
+                        'condition': day['day']['condition']['text']
+                    }
+                    for day in data['forecast']['forecastday']
+                ]
+            }
+        except requests.RequestException as e:
+            current_app.logger.error(f'Weather API error: {e}')
+            return None</code></pre>
+
+        <p>This service encapsulates all interaction with the weather API. Now let's test it using mocking:</p>
+
+        <pre><code class="language-python"># tests/test_weather.py: Testing external API with mocking
+
+import pytest
+from app import create_app
+from app.services.weather import WeatherService
+
+@pytest.fixture
+def app():
+    """Create application for testing."""
+    app = create_app('testing')
+    return app
+
+def test_get_current_weather_success(app, mocker):
+    """Test successful weather API call."""
+    # Mock the requests.get function
+    mock_get = mocker.patch('app.services.weather.requests.get')
+    
+    # Create a mock response object
+    mock_response = mocker.Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        'temp_c': 22.5,
+        'condition': {
+            'text': 'Partly cloudy',
+            'icon': '//cdn.weather.com/icon.png'
+        }
+    }
+    mock_get.return_value = mock_response
+    
+    with app.app_context():
+        service = WeatherService()
+        result = service.get_current_weather('London')
+    
+    # Verify the API was called correctly
+    mock_get.assert_called_once_with(
+        'https://api.weather.example.com/v1/current',
+        params={'q': 'London', 'key': 'demo_key'},
+        timeout=5
+    )
+    
+    # Verify the result is formatted correctly
+    assert result is not None
+    assert result['city'] == 'London'
+    assert result['temperature'] == 22.5
+    assert result['condition'] == 'Partly cloudy'
+    assert result['icon'] == '//cdn.weather.com/icon.png'
+
+def test_get_current_weather_api_error(app, mocker):
+    """Test weather API error handling."""
+    # Mock requests.get to raise an exception
+    mock_get = mocker.patch('app.services.weather.requests.get')
+    mock_get.side_effect = requests.RequestException('API unavailable')
+    
+    with app.app_context():
+        service = WeatherService()
+        result = service.get_current_weather('London')
+    
+    # Service should handle the error gracefully
+    assert result is None
+    mock_get.assert_called_once()
+
+def test_get_forecast_success(app, mocker):
+    """Test successful forecast API call."""
+    mock_get = mocker.patch('app.services.weather.requests.get')
+    
+    # Create mock response with forecast data
+    mock_response = mocker.Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        'forecast': {
+            'forecastday': [
+                {
+                    'date': '2024-01-01',
+                    'day': {
+                        'maxtemp_c': 15,
+                        'mintemp_c': 8,
+                        'condition': {'text': 'Sunny'}
+                    }
+                },
+                {
+                    'date': '2024-01-02',
+                    'day': {
+                        'maxtemp_c': 12,
+                        'mintemp_c': 6,
+                        'condition': {'text': 'Rainy'}
+                    }
+                },
+                {
+                    'date': '2024-01-03',
+                    'day': {
+                        'maxtemp_c': 14,
+                        'mintemp_c': 7,
+                        'condition': {'text': 'Cloudy'}
+                    }
+                }
+            ]
+        }
+    }
+    mock_get.return_value = mock_response
+    
+    with app.app_context():
+        service = WeatherService()
+        result = service.get_forecast('Paris', days=3)
+    
+    # Verify correct API endpoint was called
+    mock_get.assert_called_once_with(
+        'https://api.weather.example.com/v1/forecast',
+        params={'q': 'Paris', 'key': 'demo_key', 'days': 3},
+        timeout=5
+    )
+    
+    # Verify forecast data is formatted correctly
+    assert result is not None
+    assert result['city'] == 'Paris'
+    assert len(result['forecast']) == 3
+    assert result['forecast'][0]['date'] == '2024-01-01'
+    assert result['forecast'][0]['max_temp'] == 15
+    assert result['forecast'][0]['condition'] == 'Sunny'</code></pre>
+
+        <p>Notice how we create a mock response object that mimics the structure of a real <code>requests.Response</code>. The mock has a <code>json()</code> method that returns our test data, and we can verify that <code>requests.get</code> was called with the correct URL and parameters.</p>
+
+        <h2>Understanding Mock Return Values</h2>
+
+        <p>One aspect that may seem confusing at first is how to configure what mocks return. Let's clarify the different ways to set return values:</p>
+
+        <pre><code class="language-python"># Different ways to configure mock return values
+
+# Method 1: return_value for simple returns
+mock_func.return_value = 42
+result = mock_func()  # Returns 42
+
+# Method 2: side_effect for exceptions
+mock_func.side_effect = ValueError('Invalid input')
+result = mock_func()  # Raises ValueError
+
+# Method 3: side_effect for multiple calls
+mock_func.side_effect = [1, 2, 3]
+print(mock_func())  # Returns 1
+print(mock_func())  # Returns 2
+print(mock_func())  # Returns 3
+
+# Method 4: side_effect with a function
+def custom_behavior(x):
+    return x * 2
+
+mock_func.side_effect = custom_behavior
+result = mock_func(5)  # Returns 10</code></pre>
+
+        <p>Use <code>return_value</code> for simple cases where the mock should always return the same thing. Use <code>side_effect</code> when you need more complex behavior—like raising exceptions, returning different values on successive calls, or using a function to compute the return value.</p>
+
+        <h2>When to Mock and When Not to Mock</h2>
+
+        <p>This is the most important section of this chapter. Mocking is powerful, but it's also easy to overuse. Here are guidelines for when to mock:</p>
+
+        <h3>When to Mock</h3>
+
+        <ul>
+            <li><strong>External network calls:</strong> APIs, HTTP requests, database connections to external services</li>
+            <li><strong>File system operations:</strong> When you don't want tests to create/modify real files</li>
+            <li><strong>Time-dependent code:</strong> datetime.now(), time.sleep(), etc.</li>
+            <li><strong>Email/SMS sending:</strong> You don't want to send real messages during testing</li>
+            <li><strong>Payment processing:</strong> Never charge real credit cards in tests!</li>
+            <li><strong>External services you don't control:</strong> Third-party SDKs, cloud services, etc.</li>
+            <li><strong>Slow operations:</strong> Operations that would make tests take too long</li>
+            <li><strong>Non-deterministic behavior:</strong> Random number generation, UUID creation (sometimes)</li>
+        </ul>
+
+        <h3>When NOT to Mock</h3>
+
+        <ul>
+            <li><strong>Your own application code:</strong> Don't mock your models, services, or business logic—test them!</li>
+            <li><strong>Database operations (usually):</strong> Use a test database like we did in Chapter 3</li>
+            <li><strong>Simple functions:</strong> If a function is fast and has no side effects, just call it</li>
+            <li><strong>Framework code:</strong> Don't mock Flask's request, session, etc. (use test client instead)</li>
+            <li><strong>When integration is the point:</strong> If you're testing that two components work together, don't mock their interaction</li>
+        </ul>
+
+        <div class="note">
+            <strong>Golden Rule:</strong> Mock external dependencies you don't control. Don't mock your own code that you're trying to test. If you find yourself mocking a lot of your own application code, that's a sign your code might need better separation of concerns.
+        </div>
+
+        <h2>Advanced Mocking: Patching Context Managers</h2>
+
+        <p>Sometimes you need to mock context managers (objects used with the <code>with</code> statement). This comes up often with file operations and database transactions. Here's how:</p>
+
+        <pre><code class="language-python"># app/services/file_service.py: Service that uses context managers
+
+class FileService:
+    """Service for file operations."""
+    
+    def save_uploaded_file(self, file_obj, filename):
+        """Save an uploaded file to disk."""
+        filepath = f'/tmp/uploads/{filename}'
+        
+        with open(filepath, 'wb') as f:
+            f.write(file_obj.read())
+        
+        return filepath
+
+# tests/test_file_service.py: Testing context manager mocking
+
+def test_save_uploaded_file(mocker):
+    """Test file saving without actually writing to disk."""
+    # Mock the open function
+    mock_open = mocker.patch('builtins.open', mocker.mock_open())
+    
+    # Create a mock file object
+    mock_file = mocker.Mock()
+    mock_file.read.return_value = b'file content'
+    
+    service = FileService()
+    result = service.save_uploaded_file(mock_file, 'test.txt')
+    
+    # Verify file was opened for writing
+    mock_open.assert_called_once_with('/tmp/uploads/test.txt', 'wb')
+    
+    # Verify content was written
+    handle = mock_open()
+    handle.write.assert_called_once_with(b'file content')
+    
+    assert result == '/tmp/uploads/test.txt'</code></pre>
+
+        <p>The <code>mocker.mock_open()</code> helper creates a mock that behaves like Python's built-in <code>open()</code> function, including support for context managers. This is much easier than trying to manually configure all the magic methods!</p>
+
+        <h2>Mocking with Dependency Injection</h2>
+
+        <p>One of the best ways to make code testable is to use dependency injection—passing dependencies as parameters instead of creating them inside functions. This makes mocking much easier. Here's an example:</p>
+
+        <pre><code class="language-python"># Bad: Hard to test because SMTP is created inside the function
+def send_email_bad(recipient, message):
+    smtp = smtplib.SMTP('localhost', 1025)  # Hard-coded dependency
+    smtp.send_message(message)
+    smtp.quit()
+
+# Good: Easy to test because SMTP can be injected
+def send_email_good(recipient, message, smtp=None):
+    if smtp is None:
+        smtp = smtplib.SMTP('localhost', 1025)
+    
+    smtp.send_message(message)
+    smtp.quit()
+
+# Testing the good version (no mocking needed!)
+def test_send_email_with_injection():
+    mock_smtp = Mock()
+    mock_message = Mock()
+    
+    send_email_good('test@example.com', mock_message, smtp=mock_smtp)
+    
+    mock_smtp.send_message.assert_called_once_with(mock_message)
+    mock_smtp.quit.assert_called_once()</code></pre>
+
+        <p>By making the SMTP connection injectable, we can pass a mock in tests without needing to patch anything. This is a common pattern in larger applications and makes testing much cleaner.</p>
+
+        <h2>Hands-On Exercise</h2>
+
+        <div class="exercise">
+            <h3>Exercise: Add Payment Processing with Mocking</h3>
+            
+            <p><strong>Goal:</strong> Add a payment service to FlaskBlog Pro that processes premium subscriptions, and test it completely using mocking—without charging any real credit cards!</p>
+            
+            <p><strong>Requirements:</strong></p>
+            
+            <ol>
+                <li>Create a <code>PaymentService</code> class in <code>app/services/payment.py</code> that:
+                    <ul>
+                        <li>Has a method <code>charge_card(card_token, amount, description)</code></li>
+                        <li>Uses a (fake) external payment API endpoint</li>
+                        <li>Returns a payment ID on success</li>
+                        <li>Raises <code>PaymentError</code> on failure</li>
+                    </ul>
+                </li>
+                <li>Add a <code>process_subscription</code> function that:
+                    <ul>
+                        <li>Takes a user and subscription type</li>
+                        <li>Calculates the amount ($5 for basic, $10 for premium)</li>
+                        <li>Calls the payment service</li>
+                        <li>Updates the user's subscription status in the database</li>
+                        <li>Sends a confirmation email</li>
+                    </ul>
+                </li>
+                <li>Write tests that verify:
+                    <ul>
+                        <li>Payment API is called with correct parameters</li>
+                        <li>User's subscription status is updated on successful payment</li>
+                        <li>Confirmation email is sent after successful payment</li>
+                        <li>Subscription is NOT activated if payment fails</li>
+                        <li>Appropriate error messages are returned on failure</li>
+                    </ul>
+                </li>
+            </ol>
+            
+            <p><strong>Hints:</strong></p>
+            <ul>
+                <li>Mock the HTTP request to the payment API</li>
+                <li>Mock the email sending function</li>
+                <li>Use a real test database for the user/subscription data (don't mock your models!)</li>
+                <li>Use <code>side_effect</code> to simulate payment failures</li>
+                <li>Remember: mock external dependencies, test your own code</li>
+            </ul>
+            
+            <p><strong>Success Criteria:</strong> When you run your tests, you should have 100% test coverage for payment processing without making any real API calls or sending any real emails. Your tests should be fast (under 1 second) and reliable.</p>
+        </div>
+
+        <h2>Troubleshooting Mocking Issues</h2>
+
+        <div class="troubleshooting">
+            <h3>Common Mocking Problems</h3>
+            
+            <h4>Problem: "Mock was not called" even though it should have been</h4>
+            <p><strong>Solution:</strong> Make sure you're patching at the right location. Patch where the object is <em>used</em>, not where it's <em>defined</em>. If module A imports something from module B and uses it, patch it in module A:</p>
+            <pre><code class="language-python"># If app/email.py does: from smtplib import SMTP
+# Then patch it in app.email, not in smtplib:
+mocker.patch('app.email.SMTP')  # Right
+mocker.patch('smtplib.SMTP')    # Wrong!</code></pre>
+            
+            <h4>Problem: "MagicMock object has no attribute 'some_method'"</h4>
+            <p><strong>Solution:</strong> Configure the mock's attributes before using it:</p>
+            <pre><code class="language-python">mock_obj = mocker.Mock()
+mock_obj.some_method.return_value = 'result'
+# or
+mock_obj.configure_mock(some_method=mocker.Mock(return_value='result'))</code></pre>
+            
+            <h4>Problem: Test passes even when it shouldn't</h4>
+            <p><strong>Solution:</strong> You might be over-mocking. Make sure you're actually testing something! If you mock everything, your tests will always pass but won't catch bugs. Test real behavior with mocked external dependencies.</p>
+            
+            <h4>Problem: "AttributeError: __enter__" when mocking context managers</h4>
+            <p><strong>Solution:</strong> Use <code>mocker.mock_open()</code> for file operations, or manually configure the context manager:</p>
+            <pre><code class="language-python">mock_obj = mocker.Mock()
+mock_obj.__enter__.return_value = mock_obj
+mock_obj.__exit__.return_value = None</code></pre>
+        </div>
+
+        <h2>What We've Learned</h2>
+
+        <p>Take a moment to appreciate everything you've accomplished in this chapter:</p>
+
+        <ul>
+            <li>✓ You can explain what mocking is and why it's essential for testing</li>
+            <li>✓ You understand the difference between mocks, stubs, fakes, and other test doubles</li>
+            <li>✓ You know how to use unittest.mock and pytest-mock to create mock objects</li>
+            <li>✓ You can mock external API calls and verify they're called correctly</li>
+            <li>✓ You've learned how to mock email services without sending real emails</li>
+            <li>✓ You can mock HTTP requests using requests.get</li>
+            <li>✓ You understand when to mock and when not to mock</li>
+            <li>✓ You know how to use return_value and side_effect to control mock behavior</li>
+            <li>✓ You can test error handling by making mocks raise exceptions</li>
+            <li>✓ You've built services that integrate with external APIs with complete test coverage</li>
+        </ul>
+
+        <p>Mocking is one of the most powerful testing techniques you'll use throughout your career. It allows you to test code that depends on external services without the complexity, slowness, and unreliability of actually calling those services. You've learned to mock at the right level of abstraction, verify that your code interacts correctly with external dependencies, and write tests that are fast, reliable, and focused on your application's behavior. These skills will serve you in every testing situation you encounter!</p>
+
+        <h2>Before You Continue...</h2>
+
+        <p>Before moving on to Chapter 7, make sure you:</p>
+
+        <ol>
+            <li>Can explain the difference between mocks, stubs, and fakes</li>
+            <li>Understand why mocking external dependencies is important</li>
+            <li>Know how to use mocker.patch() to replace objects in tests</li>
+            <li>Can configure mock return values and side effects</li>
+            <li>Understand the principle: "Mock external dependencies, test your own code"</li>
+            <li>Have all tests passing including email and API mocking tests</li>
+            <li>Can verify that mocks are called with expected parameters using assert_called_once_with()</li>
+        </ol>
+
+        <p>If something doesn't make complete sense yet, that's okay! Mocking has a learning curve—it takes practice to know when to mock, what to mock, and how to configure mocks correctly. The patterns you've learned here will become clearer as you use them in more complex scenarios throughout the rest of this course. Don't worry if you're not comfortable with every mocking technique yet; you'll get plenty more practice in the coming chapters!</p>
+
+        <div class="success">
+            <strong>Next Up:</strong> In Chapter 7, you're going to learn about integration testing—testing how multiple components work together. You'll discover the difference between unit and integration tests, learn when to use each type, and build complete user workflows that test multiple layers of your application at once. You'll test database + application layer interactions, test multi-step processes like registration to checkout, and even test background tasks with Celery. This is where your testing strategy really comes together!
+        </div>
+
+        <div class="nav-links">
+            <a href="chapter05.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter07.html">Next Chapter →</a>
+        </div>
+
+        <footer>
+            <p>Flask Testing Mastery - A comprehensive course on testing Flask applications</p>
+            <p style="font-size: 0.9em;">Questions or feedback? Let me know!</p>
+        </footer>
+    </div>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</body>
+</html>

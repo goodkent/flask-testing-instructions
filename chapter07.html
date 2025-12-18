@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 7: Integration Testing - Flask Testing Mastery</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/prism.css">
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="chapter06.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter08.html">Next Chapter →</a>
+        </div>
+
+        <h1>Chapter 7: Integration Testing</h1>
+        <p class="chapter-subtitle">Testing How Components Work Together</p>
+
+        <div class="github-links">
+            <span class="github-label">Chapter Code:</span>
+            <a href="https://github.com/goodkent/flask-testing/tree/ch07-end" class="github-link">Browse</a>
+            <a href="https://github.com/goodkent/flask-testing/archive/refs/tags/ch07-end.zip" class="github-link">Zip</a>
+            <a href="https://github.com/goodkent/flask-testing/compare/ch06-end...ch07-end" class="github-link">Diff</a>
+        </div>
+
+        <div class="intro-section">
+            <p>Welcome back! In the previous chapter, you learned how to use mocking to isolate your tests from external dependencies. You wrote unit tests that focused on single functions and classes, replacing external API calls and email services with mocks. This isolation is incredibly powerful—your tests run fast and don't depend on external services being available.</p>
+
+            <p>But here's a question you might be wondering about: If you're mocking so many things, how do you know that everything actually works together when you put the pieces back? Unit tests verify that individual components work correctly in isolation, but what about testing the <em>integration</em> between those components?</p>
+
+            <p>This is where integration testing comes in. Integration tests verify that different parts of your application work correctly together. Instead of mocking the database, you use a real test database. Instead of testing a single function, you test complete workflows that span multiple functions, routes, and layers of your application. The goal is to catch bugs that only appear when components interact with each other.</p>
+
+            <p>In this chapter, you're going to learn the art of integration testing. You'll discover what makes a test an integration test (versus a unit test), when to use each type, and how to write integration tests that give you confidence your application works end-to-end. You'll test complete user workflows, database interactions, and even background tasks. By the end, you'll understand how to build a balanced test suite that includes both unit and integration tests working together to keep your application rock-solid.</p>
+        </div>
+
+        <h2>Learning Objectives</h2>
+        <ul>
+            <li>Understand what makes a test an integration test versus a unit test</li>
+            <li>Learn when to use integration tests and when to use unit tests</li>
+            <li>Test database and application layer interactions together</li>
+            <li>Build tests for complete multi-step user workflows</li>
+            <li>Test background tasks and asynchronous processing</li>
+            <li>Apply the testing pyramid to create a balanced test suite</li>
+        </ul>
+
+        <h2>What Is an Integration Test?</h2>
+
+        <p>Before we dive into writing integration tests, let's be crystal clear about what an integration test actually is. You've been writing unit tests up until now, so what's the difference?</p>
+
+        <h3>Unit Tests vs Integration Tests</h3>
+
+        <p>Think about it this way:</p>
+
+        <ul>
+            <li><strong>Unit tests</strong> test one "unit" of code in complete isolation. They mock out all dependencies and focus on testing a single function or method. If your function calls the database, you mock the database. If it calls an external API, you mock the API. The test is fast and focused on one specific behavior.</li>
+            <li><strong>Integration tests</strong> test how multiple units work together as an integrated whole. They use real dependencies (or at least realistic ones) and verify that components cooperate correctly. If your route needs a database, the test uses a real test database. If multiple functions need to work together, the test calls them all and verifies the result.</li>
+        </ul>
+
+        <div class="note">
+            <strong>The Key Question:</strong> "Are you testing one thing in isolation, or are you testing how things work together?" That's the difference between unit and integration testing.
+        </div>
+
+        <p>Here's a concrete example. Imagine you have a route that creates a new blog post, saves it to the database, and sends an email notification. Here's how you'd test it with both approaches:</p>
+
+        <p><strong>Unit Test Approach:</strong></p>
+        <pre><code class="language-python">def test_create_post_unit(mocker, client):
+    """Unit test: Mock the database and email"""
+    # Mock the database save operation
+    mock_db = mocker.patch('app.db.session.commit')
+    
+    # Mock the email sending
+    mock_email = mocker.patch('app.email.send_notification')
+    
+    # Call the route
+    response = client.post('/posts', json={'title': 'Test', 'body': 'Content'})
+    
+    # Verify the response
+    assert response.status_code == 201
+    
+    # Verify we tried to save to database
+    assert mock_db.called
+    
+    # Verify we tried to send email
+    assert mock_email.called</code></pre>
+
+        <p><strong>Integration Test Approach:</strong></p>
+        <pre><code class="language-python">def test_create_post_integration(client, db):
+    """Integration test: Use real database, mock only email"""
+    # Use a real test database (from db fixture)
+    # Only mock the external email service
+    mocker.patch('app.email.send_notification')
+    
+    # Call the route
+    response = client.post('/posts', json={'title': 'Test', 'body': 'Content'})
+    
+    # Verify the response
+    assert response.status_code == 201
+    
+    # Verify post was ACTUALLY saved to database
+    from app.models import Post
+    post = Post.query.filter_by(title='Test').first()
+    assert post is not None
+    assert post.body == 'Content'</code></pre>
+
+        <p>See the difference? The unit test mocks everything and verifies that the right functions were called. The integration test actually saves to a real database and verifies the data is there. Both are valuable! The unit test is fast and catches logic bugs. The integration test is slower but catches integration bugs (like "we called db.commit() but forgot to add the post to the session first").</p>
+
+        <h3>The Testing Pyramid</h3>
+
+        <p>You might be thinking: "If integration tests catch more bugs, why not just write integration tests for everything?" Great question! The answer is the testing pyramid:</p>
+
+        <pre>
+          /\
+         /  \  E2E Tests (few)
+        /____\
+       /      \
+      / Integration \ (some)
+     /_____ Tests ___\
+    /                 \
+   /    Unit Tests     \ (many)
+  /_____________________\
+</code></pre>
+
+        <p>The testing pyramid tells us:</p>
+        <ul>
+            <li><strong>Write lots of unit tests</strong> - they're fast, easy to write, and easy to debug when they fail</li>
+            <li><strong>Write some integration tests</strong> - they're slower but catch integration bugs</li>
+            <li><strong>Write few end-to-end tests</strong> - they're slowest but verify the whole system works</li>
+        </ul>
+
+        <p>Why this distribution? Unit tests run in milliseconds. Integration tests might take seconds. End-to-end tests might take minutes. If you had mostly E2E tests, you'd wait 20 minutes every time you ran your test suite! That's not sustainable. The pyramid gives you confidence at each level while keeping your suite fast.</p>
+
+        <div class="note">
+            <strong>Remember:</strong> Integration tests are your safety net for catching bugs that unit tests miss, but unit tests are your first line of defense and provide quick feedback during development.
+        </div>
+
+        <h2>Setting Up for Integration Testing</h2>
+
+        <p>Integration tests need a real database (or a realistic fake one). Let's set up a proper test database configuration. You've seen pieces of this in earlier chapters, but now we'll formalize it.</p>
+
+        <h3>Test Configuration</h3>
+
+        <p>First, let's create a dedicated test configuration that uses an in-memory SQLite database. Create or update <code>config.py</code>:</p>
+
+        <pre><code class="language-python"># config.py
+
+import os
+
+class Config:
+    """Base configuration"""
+    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key'
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    
+class TestingConfig(Config):
+    """Testing configuration"""
+    TESTING = True
+    # Use in-memory SQLite for tests - fast and isolated
+    SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+    # Disable CSRF for testing
+    WTF_CSRF_ENABLED = False
+    
+class DevelopmentConfig(Config):
+    """Development configuration"""
+    DEBUG = True
+    SQLALCHEMY_DATABASE_URI = 'sqlite:///flaskblog.db'
+    
+class ProductionConfig(Config):
+    """Production configuration"""
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
+    
+# Configuration dictionary
+config = {
+    'testing': TestingConfig,
+    'development': DevelopmentConfig,
+    'production': ProductionConfig,
+    'default': DevelopmentConfig
+}</code></pre>
+
+        <p>The key here is <code>sqlite:///:memory:</code> for the test database. This creates a database in RAM that's created fresh for each test and disappears when the test finishes. It's fast and ensures complete isolation between tests.</p>
+
+        <h3>Database Fixtures</h3>
+
+        <p>Now let's create robust database fixtures in <code>tests/conftest.py</code>. These fixtures will give every integration test a clean database:</p>
+
+        <pre><code class="language-python"># tests/conftest.py
+
+import pytest
+from app import create_app, db as _db
+from app.models import User, Post
+
+@pytest.fixture(scope='session')
+def app():
+    """Create application for testing"""
+    app = create_app('testing')
+    
+    # Establish an application context
+    with app.app_context():
+        yield app
+
+@pytest.fixture(scope='session')
+def db(app):
+    """Create database for testing"""
+    # Create all tables
+    _db.create_all()
+    
+    yield _db
+    
+    # Cleanup
+    _db.drop_all()
+
+@pytest.fixture(scope='function')
+def session(db):
+    """Create a new database session for each test"""
+    # Start a transaction
+    connection = db.engine.connect()
+    transaction = connection.begin()
+    
+    # Bind session to connection
+    session = db.create_scoped_session(
+        options={'bind': connection, 'binds': {}}
+    )
+    db.session = session
+    
+    yield session
+    
+    # Rollback transaction
+    session.close()
+    transaction.rollback()
+    connection.close()
+
+@pytest.fixture
+def client(app, session):
+    """Create test client"""
+    return app.test_client()</code></pre>
+
+        <p>Let's break down what each fixture does:</p>
+
+        <ul>
+            <li><code>app</code> - Creates the Flask application once per test session with testing config</li>
+            <li><code>db</code> - Creates database tables once per session (tables persist, data doesn't)</li>
+            <li><code>session</code> - Creates a new transaction for each test function and rolls it back after the test, ensuring a clean slate for every test</li>
+            <li><code>client</code> - Creates a test client for making HTTP requests</li>
+        </ul>
+
+        <div class="note">
+            <strong>Why the transaction rollback?</strong> By wrapping each test in a transaction and rolling it back afterward, every test starts with a clean database. This is much faster than dropping and recreating tables for every test, and it ensures tests don't interfere with each other.
+        </div>
+
+        <h2>Writing Your First Integration Test</h2>
+
+        <p>Now let's write an integration test that actually uses the database! We'll test the complete flow of creating a user account.</p>
+
+        <p>First, make sure you have a User model. Here's a simple one in <code>app/models.py</code>:</p>
+
+        <pre><code class="language-python"># app/models.py
+
+from app import db
+from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+    
+    def __repr__(self):
+        return f'<User {self.username}>'</code></pre>
+
+        <p>Now let's create a registration route in <code>app/routes.py</code>:</p>
+
+        <pre><code class="language-python"># app/routes.py (partial)
+
+from flask import request, jsonify
+from app import db
+from app.models import User
+
+@app.route('/register', methods=['POST'])
+def register():
+    """Register a new user"""
+    data = request.get_json()
+    
+    # Validate input
+    if not data or not data.get('username') or not data.get('password'):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    # Check if user already exists
+    if User.query.filter_by(username=data['username']).first():
+        return jsonify({'error': 'Username already exists'}), 400
+    
+    if User.query.filter_by(email=data['email']).first():
+        return jsonify({'error': 'Email already registered'}), 400
+    
+    # Create new user
+    user = User(
+        username=data['username'],
+        email=data['email']
+    )
+    user.set_password(data['password'])
+    
+    db.session.add(user)
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'User created successfully',
+        'user': {'id': user.id, 'username': user.username}
+    }), 201</code></pre>
+
+        <p>Now for the integration test! Create <code>tests/test_integration.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_integration.py
+
+from app.models import User
+
+def test_user_registration_integration(client, session):
+    """Test complete user registration flow with database"""
+    # Register a new user
+    response = client.post('/register', json={
+        'username': 'testuser',
+        'email': 'test@example.com',
+        'password': 'securepassword123'
+    })
+    
+    # Verify response
+    assert response.status_code == 201
+    data = response.get_json()
+    assert data['message'] == 'User created successfully'
+    assert data['user']['username'] == 'testuser'
+    
+    # Verify user was ACTUALLY created in database
+    user = User.query.filter_by(username='testuser').first()
+    assert user is not None
+    assert user.email == 'test@example.com'
+    assert user.check_password('securepassword123')
+    
+    # Verify password is hashed (not stored in plain text)
+    assert user.password_hash != 'securepassword123'
+
+def test_duplicate_username_integration(client, session):
+    """Test that duplicate usernames are rejected"""
+    # Create first user
+    user1 = User(username='testuser', email='test1@example.com')
+    user1.set_password('password')
+    session.add(user1)
+    session.commit()
+    
+    # Try to register with same username
+    response = client.post('/register', json={
+        'username': 'testuser',  # Duplicate!
+        'email': 'test2@example.com',
+        'password': 'password'
+    })
+    
+    # Verify it was rejected
+    assert response.status_code == 400
+    data = response.get_json()
+    assert 'already exists' in data['error'].lower()
+    
+    # Verify only one user with that username exists
+    users = User.query.filter_by(username='testuser').all()
+    assert len(users) == 1</code></pre>
+
+        <p>Run these tests:</p>
+        <pre><code class="language-bash">pytest tests/test_integration.py -v</code></pre>
+
+        <p>You should see:</p>
+        <pre><code class="language-bash">tests/test_integration.py::test_user_registration_integration PASSED
+tests/test_integration.py::test_duplicate_username_integration PASSED
+
+====== 2 passed in 0.15s ======</code></pre>
+
+        <p>Congratulations! You just wrote integration tests that use a real database. These tests actually create users in the database and verify they're there. This is much more thorough than unit tests that would have mocked <code>db.session.commit()</code>.</p>
+
+        <h2>Testing Multi-Step Workflows</h2>
+
+        <p>The real power of integration tests comes from testing complete workflows that span multiple routes and operations. Let's test a realistic scenario: a user registers, logs in, creates a blog post, and edits it.</p>
+
+        <p>First, let's add the necessary routes. Here's a login route in <code>app/routes.py</code>:</p>
+        <pre><code class="language-python"># app/routes.py (continued)
+
+from flask import session as flask_session
+
+@app.route('/login', methods=['POST'])
+def login():
+    """Log in a user"""
+    data = request.get_json()
+    
+    user = User.query.filter_by(username=data.get('username')).first()
+    
+    if user is None or not user.check_password(data.get('password', '')):
+        return jsonify({'error': 'Invalid username or password'}), 401
+    
+    # Store user ID in session
+    flask_session['user_id'] = user.id
+    
+    return jsonify({
+        'message': 'Login successful',
+        'user': {'id': user.id, 'username': user.username}
+    }), 200
+
+@app.route('/posts', methods=['POST'])
+def create_post():
+    """Create a new blog post"""
+    # Check if user is logged in
+    if 'user_id' not in flask_session:
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    data = request.get_json()
+    user = User.query.get(flask_session['user_id'])
+    
+    # Create post
+    post = Post(
+        title=data['title'],
+        body=data['body'],
+        author=user
+    )
+    
+    db.session.add(post)
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'Post created',
+        'post': {'id': post.id, 'title': post.title}
+    }), 201
+
+@app.route('/posts/<int:post_id>', methods=['PUT'])
+def update_post(post_id):
+    """Update an existing post"""
+    if 'user_id' not in flask_session:
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    post = Post.query.get_or_404(post_id)
+    
+    # Verify user owns this post
+    if post.user_id != flask_session['user_id']:
+        return jsonify({'error': 'Permission denied'}), 403
+    
+    data = request.get_json()
+    post.title = data.get('title', post.title)
+    post.body = data.get('body', post.body)
+    
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'Post updated',
+        'post': {'id': post.id, 'title': post.title}
+    }), 200</code></pre>
+
+        <p>We'll also need a Post model. Add this to <code>app/models.py</code>:</p>
+
+        <pre><code class="language-python"># app/models.py (add this)
+
+class Post(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Foreign key to User
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    
+    # Relationship
+    author = db.relationship('User', backref=db.backref('posts', lazy=True))
+    
+    def __repr__(self):
+        return f'<Post {self.title}>'</code></pre>
+
+        <p>Now let's write an integration test for the complete workflow:</p>
+
+        <pre><code class="language-python"># tests/test_integration.py (add this)
+
+def test_complete_user_workflow_integration(client, session):
+    """Test complete workflow: register → login → create post → edit post"""
+    
+    # Step 1: Register a new user
+    register_response = client.post('/register', json={
+        'username': 'blogger',
+        'email': 'blogger@example.com',
+        'password': 'password123'
+    })
+    assert register_response.status_code == 201
+    
+    # Verify user exists in database
+    user = User.query.filter_by(username='blogger').first()
+    assert user is not None
+    
+    # Step 2: Login with that user
+    login_response = client.post('/login', json={
+        'username': 'blogger',
+        'password': 'password123'
+    })
+    assert login_response.status_code == 200
+    
+    # Step 3: Create a blog post (now authenticated)
+    create_post_response = client.post('/posts', json={
+        'title': 'My First Post',
+        'body': 'This is the content of my first blog post!'
+    })
+    assert create_post_response.status_code == 201
+    post_id = create_post_response.get_json()['post']['id']
+    
+    # Verify post exists in database and belongs to correct user
+    from app.models import Post
+    post = Post.query.get(post_id)
+    assert post is not None
+    assert post.title == 'My First Post'
+    assert post.author.username == 'blogger'
+    
+    # Step 4: Edit the post
+    edit_response = client.put(f'/posts/{post_id}', json={
+        'title': 'My First Post (Updated)',
+        'body': 'Updated content!'
+    })
+    assert edit_response.status_code == 200
+    
+    # Verify changes persisted to database
+    session.refresh(post)  # Reload from database
+    assert post.title == 'My First Post (Updated)'
+    assert post.body == 'Updated content!'
+    
+    # Step 5: Verify another user can't edit this post
+    # Create and login as different user
+    client.post('/register', json={
+        'username': 'otheruser',
+        'email': 'other@example.com',
+        'password': 'password123'
+    })
+    client.post('/login', json={
+        'username': 'otheruser',
+        'password': 'password123'
+    })
+    
+    # Try to edit the first user's post
+    unauthorized_edit = client.put(f'/posts/{post_id}', json={
+        'title': 'Hacked!',
+        'body': 'This should not work'
+    })
+    assert unauthorized_edit.status_code == 403
+    
+    # Verify post was NOT changed
+    session.refresh(post)
+    assert post.title == 'My First Post (Updated)'  # Unchanged!</code></pre>
+
+        <p>This is a <em>real</em> integration test! It tests five different routes working together, verifies database state at each step, and even tests the security boundary (ensuring users can't edit each other's posts). Run it:</p>
+
+        <pre><code class="language-bash">pytest tests/test_integration.py::test_complete_user_workflow_integration -v</code></pre>
+
+        <p>If it passes, you have confidence that this entire workflow functions correctly end-to-end!</p>
+
+        <div class="note">
+            <strong>Integration Test Characteristics:</strong> Notice this test uses multiple routes, creates real database records, maintains session state across requests, and verifies the final state in the database. This is much more comprehensive than individual unit tests for each route would be.
+        </div>
+
+        <h2>Testing Database and Application Layer Together</h2>
+
+        <p>One of the most valuable uses of integration testing is verifying that your database operations work correctly with your application logic. Let's look at some examples.</p>
+
+        <h3>Testing Relationships</h3>
+
+        <p>SQLAlchemy relationships are notorious for causing bugs when you get the configuration slightly wrong. Integration tests catch these issues:</p>
+
+        <pre><code class="language-python">def test_user_posts_relationship(session):
+    """Test that User-Post relationship works correctly"""
+    # Create user
+    user = User(username='testuser', email='test@example.com')
+    user.set_password('password')
+    session.add(user)
+    session.commit()
+    
+    # Create posts for this user
+    post1 = Post(title='Post 1', body='Content 1', author=user)
+    post2 = Post(title='Post 2', body='Content 2', author=user)
+    session.add_all([post1, post2])
+    session.commit()
+    
+    # Test relationship from User side
+    user_from_db = User.query.get(user.id)
+    assert len(user_from_db.posts) == 2
+    assert post1 in user_from_db.posts
+    assert post2 in user_from_db.posts
+    
+    # Test relationship from Post side
+    post_from_db = Post.query.get(post1.id)
+    assert post_from_db.author == user
+    assert post_from_db.author.username == 'testuser'</code></pre>
+
+        <h3>Testing Cascading Deletes</h3>
+
+        <p>If you configure a relationship with <code>cascade='all, delete-orphan'</code>, you probably want to test that it actually cascades:</p>
+
+        <pre><code class="language-python">def test_deleting_user_deletes_posts(session):
+    """Test that deleting a user cascades to their posts"""
+    # Create user with posts
+    user = User(username='testuser', email='test@example.com')
+    user.set_password('password')
+    session.add(user)
+    session.commit()
+    
+    post = Post(title='Post', body='Content', author=user)
+    session.add(post)
+    session.commit()
+    
+    post_id = post.id
+    
+    # Delete the user
+    session.delete(user)
+    session.commit()
+    
+    # Verify post was also deleted (if cascade is configured)
+    deleted_post = Post.query.get(post_id)
+    assert deleted_post is None  # Should be deleted</code></pre>
+
+        <p>If this test fails, you know your cascade configuration isn't correct!</p>
+
+        <h3>Testing Constraints</h3>
+
+        <p>Database constraints (unique, not null, etc.) should be tested too:</p>
+
+        <pre><code class="language-python">import pytest
+from sqlalchemy.exc import IntegrityError
+
+def test_username_unique_constraint(session):
+    """Test that duplicate usernames raise IntegrityError"""
+    user1 = User(username='testuser', email='test1@example.com')
+    user1.set_password('password')
+    session.add(user1)
+    session.commit()
+    
+    # Try to create another user with same username
+    user2 = User(username='testuser', email='test2@example.com')
+    user2.set_password('password')
+    session.add(user2)
+    
+    # This should raise IntegrityError
+    with pytest.raises(IntegrityError):
+        session.commit()</code></pre>
+
+        <h2>Testing Background Tasks</h2>
+
+        <p>Many Flask applications use background task queues like Celery or RQ for long-running operations. Let's see how to test these.</p>
+
+        <h3>Example: Email Notification Task</h3>
+
+        <p>Imagine you have a Celery task that sends a welcome email when a user registers. Here's how it might look:</p>
+
+        <pre><code class="language-python"># app/tasks.py
+
+from app import celery
+from app.email import send_email
+
+@celery.task
+def send_welcome_email(user_id):
+    """Send welcome email to new user"""
+    from app.models import User
+    user = User.query.get(user_id)
+    
+    if user:
+        send_email(
+            to=user.email,
+            subject='Welcome to FlaskBlog Pro!',
+            body=f'Hi {user.username}, welcome to our platform!'
+        )
+        return f'Email sent to {user.email}'
+    return 'User not found'</code></pre>
+
+        <p>And you modify registration to trigger this task:</p>
+
+        <pre><code class="language-python"># In register route
+from app.tasks import send_welcome_email
+
+# After creating user...
+db.session.add(user)
+db.session.commit()
+
+# Queue the background task
+send_welcome_email.delay(user.id)</code></pre>
+
+        <h3>Testing Strategy for Background Tasks</h3>
+
+        <p>You have two choices for testing background tasks:</p>
+
+        <ol>
+            <li><strong>Test in eager mode</strong> - Configure Celery to run tasks immediately and synchronously during tests</li>
+            <li><strong>Test that tasks are queued</strong> - Verify the task was scheduled but mock its execution</li>
+        </ol>
+
+        <p>For integration tests, eager mode is often best. Configure it in your test config:</p>
+
+        <pre><code class="language-python"># config.py
+
+class TestingConfig(Config):
+    # ...existing config...
+    
+    # Celery configuration for testing
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES_EXCEPTIONS = True</code></pre>
+
+        <p>With this configuration, tasks run immediately during tests instead of being queued:</p>
+
+        <pre><code class="language-python">def test_registration_sends_welcome_email(client, session, mocker):
+    """Test that registering triggers welcome email task"""
+    # Mock the actual email sending
+    mock_send = mocker.patch('app.email.send_email')
+    
+    # Register user
+    response = client.post('/register', json={
+        'username': 'newuser',
+        'email': 'new@example.com',
+        'password': 'password123'
+    })
+    
+    assert response.status_code == 201
+    
+    # Verify email was sent (task ran immediately in eager mode)
+    mock_send.assert_called_once()
+    args, kwargs = mock_send.call_args
+    assert kwargs['to'] == 'new@example.com'
+    assert 'Welcome' in kwargs['subject']
+    assert 'newuser' in kwargs['body']</code></pre>
+
+        <p>This is an integration test because it tests the route AND the background task together. The task runs synchronously, so we can verify it was executed.</p>
+
+        <h3>Testing Periodic Tasks</h3>
+
+        <p>For periodic tasks (tasks that run on a schedule), you can test them directly by calling them:</p>
+
+        <pre><code class="language-python"># app/tasks.py
+
+@celery.task
+def cleanup_old_sessions():
+    """Remove sessions older than 30 days"""
+    from datetime import datetime, timedelta
+    from app.models import UserSession
+    
+    cutoff = datetime.utcnow() - timedelta(days=30)
+    old_sessions = UserSession.query.filter(UserSession.created_at < cutoff).all()
+    
+    count = len(old_sessions)
+    for session in old_sessions:
+        db.session.delete(session)
+    db.session.commit()
+    
+    return f'Deleted {count} old sessions'</code></pre>
+
+        <p>Test it directly:</p>
+
+        <pre><code class="language-python">from datetime import datetime, timedelta
+from app.tasks import cleanup_old_sessions
+from app.models import UserSession
+
+def test_cleanup_old_sessions_task(session):
+    """Test that old sessions are deleted"""
+    user = User(username='test', email='test@example.com')
+    user.set_password('pass')
+    session.add(user)
+    session.commit()
+    
+    # Create old session (40 days old)
+    old_time = datetime.utcnow() - timedelta(days=40)
+    old_session = UserSession(user=user, created_at=old_time)
+    session.add(old_session)
+    
+    # Create recent session (5 days old)
+    recent_time = datetime.utcnow() - timedelta(days=5)
+    recent_session = UserSession(user=user, created_at=recent_time)
+    session.add(recent_session)
+    session.commit()
+    
+    # Run the cleanup task
+    result = cleanup_old_sessions()
+    
+    # Verify old session was deleted but recent one remains
+    assert '1' in result  # "Deleted 1 old sessions"
+    assert UserSession.query.get(old_session.id) is None
+    assert UserSession.query.get(recent_session.id) is not None</code></pre>
+
+        <h2>When to Use Integration Tests vs Unit Tests</h2>
+
+        <p>Now that you've seen both types of tests, let's talk about when to use each one. This is one of the most common questions developers have about testing.</p>
+
+        <h3>Use Unit Tests When:</h3>
+
+        <ul>
+            <li><strong>Testing business logic in isolation</strong> - Pure functions that don't depend on external state</li>
+            <li><strong>Testing edge cases</strong> - You want to test many variations of inputs quickly</li>
+            <li><strong>You need fast feedback</strong> - Unit tests run in milliseconds</li>
+            <li><strong>Testing error handling</strong> - It's easier to simulate errors with mocks</li>
+            <li><strong>External dependencies are unreliable</strong> - Third-party APIs, payment processors, etc.</li>
+        </ul>
+
+        <p><strong>Example:</strong> Testing password validation logic:</p>
+        <pre><code class="language-python">def test_password_validation():
+    """Unit test: Pure function, no dependencies"""
+    assert is_valid_password('abc') == False  # Too short
+    assert is_valid_password('password123') == True  # Valid
+    assert is_valid_password('12345678') == False  # No letters</code></pre>
+
+        <h3>Use Integration Tests When:</h3>
+
+        <ul>
+            <li><strong>Testing component interactions</strong> - Database + routes, multiple services working together</li>
+            <li><strong>Testing critical user workflows</strong> - Registration → login → purchase flows</li>
+            <li><strong>Testing database operations</strong> - Relationships, constraints, cascade deletes</li>
+            <li><strong>Testing configuration</strong> - Is everything wired together correctly?</li>
+            <li><strong>Catching integration bugs</strong> - Bugs that only appear when components interact</li>
+        </ul>
+
+        <p><strong>Example:</strong> Testing user registration (database + routes + validation together):</p>
+        <pre><code class="language-python">def test_registration_workflow(client, session):
+    """Integration test: Tests route + database + validation together"""
+    response = client.post('/register', json={
+        'username': 'testuser',
+        'email': 'test@example.com',
+        'password': 'password123'
+    })
+    
+    assert response.status_code == 201
+    user = User.query.filter_by(username='testuser').first()
+    assert user is not None  # Actually in database!</code></pre>
+
+        <h3>The Balanced Approach</h3>
+
+        <p>In practice, you want both! Here's a typical strategy:</p>
+
+        <ul>
+            <li><strong>Write unit tests for:</strong> Utility functions, business logic, validators, helpers</li>
+            <li><strong>Write integration tests for:</strong> API endpoints, database operations, complete workflows</li>
+            <li><strong>Write E2E tests for:</strong> Critical user journeys (we'll cover this in Chapter 10)</li>
+        </ul>
+
+        <p>For FlaskBlog Pro, you might have:</p>
+        <ul>
+            <li>100 unit tests (password validation, slug generation, date formatting, etc.)</li>
+            <li>30 integration tests (user workflows, CRUD operations, authentication flows)</li>
+            <li>5 E2E tests (complete user journeys from registration to publishing a post)</li>
+        </ul>
+
+        <div class="note">
+            <strong>Rule of Thumb:</strong> If removing a mock would require starting up a database or external service, that's a unit test. If the test uses real instances of your own components (database, models, routes), that's an integration test. If the test uses a real browser, that's an E2E test.
+        </div>
+
+        <h2>Hands-On Exercise: Test a Complete User Workflow</h2>
+
+        <div class="exercise">
+            <h3>Exercise: Build and Test a Comment System</h3>
+            
+            <p>Now it's your turn! You're going to add a comment system to FlaskBlog Pro and write integration tests for the complete workflow.</p>
+            
+            <h4>Requirements:</h4>
+            
+            <ol>
+                <li><strong>Create a Comment model</strong> with these fields:
+                    <ul>
+                        <li><code>id</code> (primary key)</li>
+                        <li><code>body</code> (text, required)</li>
+                        <li><code>created_at</code> (datetime)</li>
+                        <li><code>user_id</code> (foreign key to User)</li>
+                        <li><code>post_id</code> (foreign key to Post)</li>
+                    </ul>
+                </li>
+                
+                <li><strong>Create these routes:</strong>
+                    <ul>
+                        <li><code>POST /posts/&lt;post_id&gt;/comments</code> - Add comment to a post (requires login)</li>
+                        <li><code>GET /posts/&lt;post_id&gt;/comments</code> - Get all comments for a post</li>
+                        <li><code>DELETE /comments/&lt;comment_id&gt;</code> - Delete a comment (only if you own it)</li>
+                    </ul>
+                </li>
+                
+                <li><strong>Write integration tests for:</strong>
+                    <ul>
+                        <li>Complete workflow: User registers → logs in → creates post → adds comment to post</li>
+                        <li>Verify authenticated users can comment on any post</li>
+                        <li>Verify users can only delete their own comments</li>
+                        <li>Verify comments belong to the correct post and user in the database</li>
+                        <li>Verify you can't comment without being logged in</li>
+                    </ul>
+                </li>
+            </ol>
+            
+            <h4>Getting Started:</h4>
+            
+            <p>Begin by creating the Comment model in <code>app/models.py</code>:</p>
+            
+            <pre><code class="language-python">class Comment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Foreign keys
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    post_id = db.Column(db.Integer, db.ForeignKey('post.id'), nullable=False)
+    
+    # Relationships
+    author = db.relationship('User', backref=db.backref('comments', lazy=True))
+    post = db.relationship('Post', backref=db.backref('comments', lazy=True))
+    
+    def __repr__(self):
+        return f'<Comment {self.id} on Post {self.post_id}>'</code></pre>
+            
+            <p>Then create the routes in <code>app/routes.py</code>, and finally write comprehensive integration tests in <code>tests/test_integration.py</code>.</p>
+            
+            <h4>Hints:</h4>
+            <ul>
+                <li>Use the test client to maintain session state across requests (login persists)</li>
+                <li>Create helper functions to reduce code duplication (e.g., <code>create_and_login_user()</code>)</li>
+                <li>Remember to verify database state, not just HTTP responses</li>
+                <li>Test both success cases AND failure cases (unauthorized access, not found, etc.)</li>
+                <li>Use descriptive test names that explain the scenario being tested</li>
+            </ul>
+            
+            <h4>Success Criteria:</h4>
+            
+            <p>When you run <code>pytest tests/test_integration.py -v</code>, you should have:</p>
+            <ul>
+                <li>At least 5 integration tests passing</li>
+                <li>Tests that verify complete workflows from registration through commenting</li>
+                <li>Tests that check database state (not just response codes)</li>
+                <li>Tests that verify authorization (users can't delete others' comments)</li>
+                <li>All tests should use real database operations (not mocks)</li>
+            </ul>
+            
+            <p>If you get stuck, remember: integration tests are about testing how things work together. Don't mock the database or your own models—use them for real!</p>
+        </div>
+
+        <h2>Troubleshooting Integration Tests</h2>
+
+        <div class="troubleshooting">
+            <h3>Common Integration Test Problems</h3>
+            
+            <h4>Problem: "Table already exists" error</h4>
+            <p><strong>Cause:</strong> You're trying to create tables that already exist from a previous test.</p>
+            <p><strong>Solution:</strong> Make sure your fixtures properly clean up. The <code>db</code> fixture should drop tables at the end:</p>
+            <pre><code class="language-python">@pytest.fixture(scope='session')
+def db(app):
+    _db.create_all()
+    yield _db
+    _db.drop_all()  # This is critical!</code></pre>
+            
+            <h4>Problem: "No application found" or "Working outside application context"</h4>
+            <p><strong>Cause:</strong> Some code is trying to access the Flask application context when it doesn't exist.</p>
+            <p><strong>Solution:</strong> Make sure your app fixture establishes an application context:</p>
+            <pre><code class="language-python">@pytest.fixture(scope='session')
+def app():
+    app = create_app('testing')
+    with app.app_context():
+        yield app</code></pre>
+            
+            <h4>Problem: Tests pass individually but fail when run together</h4>
+            <p><strong>Cause:</strong> Tests are interfering with each other's database state.</p>
+            <p><strong>Solution:</strong> Ensure each test gets a clean database. Use the session fixture with transaction rollback:</p>
+            <pre><code class="language-python">@pytest.fixture(scope='function')
+def session(db):
+    connection = db.engine.connect()
+    transaction = connection.begin()
+    session = db.create_scoped_session(options={'bind': connection})
+    
+    yield session
+    
+    session.close()
+    transaction.rollback()  # Rolls back all changes!
+    connection.close()</code></pre>
+            
+            <h4>Problem: "DetachedInstanceError: Instance is not bound to a Session"</h4>
+            <p><strong>Cause:</strong> You're trying to access a SQLAlchemy object after the session has been closed.</p>
+            <p><strong>Solution:</strong> Access all needed attributes before the test ends, or use <code>session.refresh(obj)</code> to reload the object:</p>
+            <pre><code class="language-python">def test_example(session, client):
+    response = client.post('/posts', json={'title': 'Test'})
+    post_id = response.get_json()['post']['id']
+    
+    post = Post.query.get(post_id)
+    # Access attributes while session is active
+    title = post.title
+    author_name = post.author.username
+    
+    assert title == 'Test'</code></pre>
+            
+            <h4>Problem: Integration tests are too slow</h4>
+            <p><strong>Solutions:</strong></p>
+            <ul>
+                <li>Use in-memory SQLite (<code>sqlite:///:memory:</code>) instead of PostgreSQL for tests</li>
+                <li>Use transaction rollback instead of recreating tables for each test</li>
+                <li>Reduce unnecessary database queries (use eager loading)</li>
+                <li>Consider moving some tests to unit tests with mocks</li>
+                <li>Use pytest-xdist to run tests in parallel: <code>pytest -n auto</code></li>
+            </ul>
+            
+            <h4>Problem: Can't test session-based authentication</h4>
+            <p><strong>Solution:</strong> The Flask test client maintains session state across requests in the same test. Just make sure to use the same client instance:</p>
+            <pre><code class="language-python">def test_with_session(client):
+    # Login
+    client.post('/login', json={'username': 'test', 'password': 'pass'})
+    
+    # Subsequent requests maintain the session!
+    response = client.get('/protected-route')
+    assert response.status_code == 200  # Still logged in</code></pre>
+        </div>
+
+        <h2>What We've Learned</h2>
+
+        <p>Take a moment to appreciate everything you've accomplished in this chapter:</p>
+
+        <ul>
+            <li>✓ You understand the difference between unit tests and integration tests</li>
+            <li>✓ You can explain when to use each type of test</li>
+            <li>✓ You know how to set up a test database with proper fixtures and transaction rollback</li>
+            <li>✓ You've learned to write integration tests that use real database operations</li>
+            <li>✓ You can test complete multi-step workflows across multiple routes</li>
+            <li>✓ You know how to test database relationships, constraints, and cascading operations</li>
+            <li>✓ You've learned to test background tasks in both eager and queued modes</li>
+            <li>✓ You understand the testing pyramid and how to balance different types of tests</li>
+            <li>✓ You can test session-based authentication flows across multiple requests</li>
+            <li>✓ You've built confidence that your application's components work correctly together</li>
+        </ul>
+
+        <p>Integration testing is where your test suite really starts to provide comprehensive coverage. While unit tests catch bugs in individual functions, integration tests catch the subtle bugs that only appear when components interact. You've learned to write tests that verify not just that your code executes, but that it produces the correct results in a real database with real data. These skills are essential for building production-ready applications!</p>
+
+        <h2>Before You Continue...</h2>
+
+        <p>Before moving on to Chapter 8, make sure you:</p>
+
+        <ol>
+            <li>Can explain the difference between unit and integration tests in your own words</li>
+            <li>Understand why the testing pyramid recommends more unit tests than integration tests</li>
+            <li>Have a working test database setup with proper fixtures and transaction rollback</li>
+            <li>Can write integration tests that verify database state, not just response codes</li>
+            <li>Know how to test multi-step workflows across multiple routes</li>
+            <li>Understand when to use real dependencies versus mocks</li>
+            <li>Have all integration tests passing, including the hands-on exercise</li>
+        </ol>
+
+        <p>If something doesn't make complete sense yet, that's okay! Integration testing requires balancing many concerns—isolation vs realism, speed vs thoroughness, mocking vs real dependencies. These decisions become easier with experience. The patterns you've learned here will serve you well throughout the rest of this course, and you'll see more examples of integration testing in upcoming chapters as we build more complex features!</p>
+
+        <div class="success">
+            <strong>Next Up:</strong> In Chapter 8, you're going to learn about testing Flask Blueprints and the application factory pattern. You'll discover how to organize large Flask applications into modular blueprints and how to test each blueprint both independently and as part of the whole application. You'll learn to share fixtures across blueprint tests, test blueprint registration, and even test applications with multiple configurations. This is essential for building maintainable, testable Flask applications that scale beyond a single file!
+        </div>
+
+        <div class="nav-links">
+            <a href="chapter06.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter08.html">Next Chapter →</a>
+        </div>
+
+        <footer>
+            <p>Flask Testing Mastery - A comprehensive course on testing Flask applications</p>
+            <p style="font-size: 0.9em;">Questions or feedback? Let me know!</p>
+        </footer>
+    </div>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</body>
+</html>
