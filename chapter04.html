@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 4: Testing Forms and Validation - Flask Testing Mastery</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/prism.css">
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="chapter03.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter05.html">Next Chapter →</a>
+        </div>
+
+        <h1>Chapter 4: Testing Forms and Validation</h1>
+        <p class="chapter-subtitle">Ensuring your user input handling works flawlessly</p>
+
+        <div class="github-links">
+            <span class="github-label">Chapter Code:</span>
+            <a href="https://github.com/goodkent/flask-testing/tree/ch04-end" class="github-link">Browse</a>
+            <a href="https://github.com/goodkent/flask-testing/archive/refs/tags/ch04-end.zip" class="github-link">Zip</a>
+            <a href="https://github.com/goodkent/flask-testing/compare/ch03-end...ch04-end" class="github-link">Diff</a>
+        </div>
+
+        <div class="intro-section">
+            <p>Welcome back! In the previous chapter, you replaced the in-memory blog post storage with a real database using SQLAlchemy. You have a working Post model and comprehensive tests for your data layer. But there's something missing from FlaskBlog Pro: users! Right now, anyone can create, edit, or delete posts. In a real blog application, you need user accounts, authentication, and the ability to track who wrote each post.</p>
+
+            <p>That's what we're going to build in this chapter. We're going to add user registration and login functionality to FlaskBlog Pro. And here's the important part: we're going to test every aspect of it, from form validation to database storage to error handling.</p>
+
+            <p>If you've ever built a web application, you know that forms are where users interact with your app. They're also where things can go wrong in spectacular ways. Users will type the wrong email format, leave required fields empty, try to register with usernames that already exist, and find creative ways to break validation logic you thought was bulletproof.</p>
+
+            <p>That's why testing forms thoroughly is crucial. In this chapter, you're going to learn how to test WTForms validation, handle CSRF tokens in tests, verify form rendering, and build a complete registration and login system with comprehensive tests.</p>
+        </div>
+
+        <h2>Learning Objectives</h2>
+        <ul>
+            <li>Create a User model and relate it to the Post model</li>
+            <li>Build registration and login forms with WTForms</li>
+            <li>Test form validation rules and custom validators</li>
+            <li>Handle CSRF tokens in your test suite</li>
+            <li>Test password hashing and verification</li>
+            <li>Verify form error messages display correctly</li>
+            <li>Build a complete authentication system with comprehensive tests</li>
+        </ul>
+
+        <h2>Why Form Testing Matters</h2>
+
+        <p>Before we dive into the code, I want to explain why form testing deserves careful attention. Forms are deceptively complex:</p>
+
+        <ul>
+            <li><strong>Security gatekeeper:</strong> Forms are often your first line of defense against malicious input</li>
+            <li><strong>User experience:</strong> Clear validation errors help users succeed</li>
+            <li><strong>Data integrity:</strong> Validation ensures your database receives clean data</li>
+            <li><strong>Business logic:</strong> Forms often contain critical business rules (like "username must be unique")</li>
+        </ul>
+
+        <p>A single bug in form validation can lead to corrupted data, security vulnerabilities, or frustrated users. Testing forms thoroughly prevents these issues before they reach production.</p>
+
+        <h2>Installing Flask-WTF</h2>
+
+        <p>We're going to use Flask-WTF, which integrates WTForms with Flask and provides CSRF protection. Install it along with email validation support:</p>
+
+        <pre><code class="language-bash">(venv) $ pip install flask-wtf email-validator</code></pre>
+
+        <p>Update your requirements file:</p>
+
+        <pre><code class="language-bash">(venv) $ pip freeze > requirements.txt</code></pre>
+
+        <div class="note">
+            <p><strong>Note:</strong> The <code>email-validator</code> package is required for WTForms' email validation to work. Without it, the Email validator will raise an error.</p>
+        </div>
+
+        <h2>Creating the User Model</h2>
+
+        <p>First, let's add a User model to our application. We'll also add a relationship between User and Post so we can track who wrote each blog post. Open <code>app/models.py</code> and update it:</p>
+
+        <pre><code class="language-python"># app/models.py: Database models
+
+from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
+from app import db
+
+
+class User(db.Model):
+    """User model for authentication."""
+    __tablename__ = 'users'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    email = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationship to posts
+    posts = db.relationship('Post', backref='author', lazy='dynamic')
+    
+    def set_password(self, password):
+        """Hash and store the password."""
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        """Check if the provided password matches the hash."""
+        return check_password_hash(self.password_hash, password)
+    
+    def __repr__(self):
+        return f'<User {self.username}>'
+
+
+class Post(db.Model):
+    """Blog post model."""
+    __tablename__ = 'posts'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Foreign key to user
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    
+    def __repr__(self):
+        return f'<Post {self.id}: {self.title}>'
+    
+    def to_dict(self):
+        """Convert post to dictionary for JSON responses."""
+        return {
+            'id': self.id,
+            'title': self.title,
+            'content': self.content,
+            'author': self.author.username if self.author else None
+        }</code></pre>
+
+        <p>Let me explain the key additions:</p>
+
+        <p><strong>User model:</strong></p>
+        <ul>
+            <li><code>username</code> and <code>email</code> are unique and indexed for fast lookups</li>
+            <li><code>password_hash</code> stores the hashed password (never store plain passwords!)</li>
+            <li><code>set_password()</code> method hashes passwords using Werkzeug's security functions</li>
+            <li><code>check_password()</code> method verifies passwords against the hash</li>
+            <li><code>posts</code> relationship gives us easy access to a user's posts</li>
+        </ul>
+
+        <p><strong>Post model updates:</strong></p>
+        <ul>
+            <li><code>user_id</code> foreign key links each post to its author</li>
+            <li><code>author</code> backref (created by the relationship) lets us access the post's author</li>
+            <li><code>to_dict()</code> now includes the author's username</li>
+        </ul>
+
+        <div class="note">
+            <p><strong>Important Security Note:</strong> Notice we're storing <code>password_hash</code>, not the actual password. This is crucial! If your database is ever compromised, the attacker gets hashes instead of plain passwords. Werkzeug's <code>generate_password_hash()</code> uses strong hashing algorithms that are very difficult to reverse.</p>
+        </div>
+
+        <h2>Creating Registration and Login Forms</h2>
+
+        <p>Now let's create forms for user registration and login. Create a new file <code>app/forms.py</code>:</p>
+
+        <pre><code class="language-python"># app/forms.py: WTForms form definitions
+
+from flask_wtf import FlaskForm
+from wtforms import StringField, PasswordField, SubmitField, TextAreaField
+from wtforms.validators import DataRequired, Email, Length, EqualTo, ValidationError
+from app.models import User
+
+
+class RegistrationForm(FlaskForm):
+    """Form for user registration."""
+    username = StringField('Username', 
+                          validators=[DataRequired(), Length(min=3, max=20)])
+    email = StringField('Email',
+                       validators=[DataRequired(), Email()])
+    password = PasswordField('Password',
+                            validators=[DataRequired(), Length(min=8)])
+    confirm_password = PasswordField('Confirm Password',
+                                    validators=[DataRequired(), 
+                                               EqualTo('password', message='Passwords must match')])
+    submit = SubmitField('Register')
+    
+    def validate_username(self, username):
+        """Custom validator to check if username already exists."""
+        user = User.query.filter_by(username=username.data).first()
+        if user:
+            raise ValidationError('Username already taken. Please choose a different one.')
+    
+    def validate_email(self, email):
+        """Custom validator to check if email already exists."""
+        user = User.query.filter_by(email=email.data).first()
+        if user:
+            raise ValidationError('Email already registered. Please use a different one.')
+
+
+class LoginForm(FlaskForm):
+    """Form for user login."""
+    username = StringField('Username',
+                          validators=[DataRequired()])
+    password = PasswordField('Password',
+                            validators=[DataRequired()])
+    submit = SubmitField('Login')</code></pre>
+
+        <p>These forms use several types of validators:</p>
+
+        <ul>
+            <li><code>DataRequired()</code> - Field must not be empty</li>
+            <li><code>Email()</code> - Must be a valid email format</li>
+            <li><code>Length(min=X, max=Y)</code> - String length constraints</li>
+            <li><code>EqualTo('field')</code> - Must match another field (for password confirmation)</li>
+            <li>Custom validators (<code>validate_username</code>, <code>validate_email</code>) - Check database for uniqueness</li>
+        </ul>
+
+        <p>Notice the custom validators! WTForms automatically calls any method named <code>validate_&lt;fieldname&gt;</code> when validating that field. This is perfect for checking database constraints like username uniqueness.</p>
+
+        <h2>Testing the User Model</h2>
+
+        <p>Before we test forms, let's test our User model to make sure password hashing works correctly. Create a new test file <code>tests/test_user_model.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_user_model.py: Tests for User model
+
+from app.models import User
+from app import db
+
+
+def test_create_user(db_session):
+    """Test creating a user."""
+    user = User(username='testuser', email='test@example.com')
+    user.set_password('testpassword123')
+    
+    db.session.add(user)
+    db.session.commit()
+    
+    assert user.id is not None
+    assert user.username == 'testuser'
+    assert user.email == 'test@example.com'
+    assert user.password_hash is not None
+    assert user.password_hash != 'testpassword123'  # Should be hashed!
+
+
+def test_password_hashing(db_session):
+    """Test password hashing and verification."""
+    user = User(username='testuser', email='test@example.com')
+    user.set_password('mypassword123')
+    
+    # Correct password should verify
+    assert user.check_password('mypassword123') is True
+    
+    # Wrong password should not verify
+    assert user.check_password('wrongpassword') is False
+
+
+def test_user_post_relationship(db_session):
+    """Test the relationship between users and posts."""
+    from app.models import Post
+    
+    user = User(username='testuser', email='test@example.com')
+    user.set_password('password123')
+    db.session.add(user)
+    db.session.commit()
+    
+    post = Post(title='Test Post', content='Test content', author=user)
+    db.session.add(post)
+    db.session.commit()
+    
+    # Test the relationship works both ways
+    assert post.author.username == 'testuser'
+    assert user.posts.count() == 1
+    assert user.posts.first().title == 'Test Post'
+
+
+def test_unique_username(db_session):
+    """Test that usernames must be unique."""
+    user1 = User(username='testuser', email='test1@example.com')
+    user1.set_password('password123')
+    db.session.add(user1)
+    db.session.commit()
+    
+    # Try to create another user with the same username
+    user2 = User(username='testuser', email='test2@example.com')
+    user2.set_password('password456')
+    db.session.add(user2)
+    
+    # This should raise an IntegrityError
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+    
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+
+
+def test_unique_email(db_session):
+    """Test that emails must be unique."""
+    user1 = User(username='user1', email='test@example.com')
+    user1.set_password('password123')
+    db.session.add(user1)
+    db.session.commit()
+    
+    # Try to create another user with the same email
+    user2 = User(username='user2', email='test@example.com')
+    user2.set_password('password456')
+    db.session.add(user2)
+    
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+    
+    with pytest.raises(IntegrityError):
+        db.session.commit()</code></pre>
+
+        <p>Run these tests to make sure the User model works correctly:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest tests/test_user_model.py -v</code></pre>
+
+        <p>You should see all tests passing. These tests verify that password hashing works, that the user-post relationship is set up correctly, and that database constraints (unique username and email) are enforced.</p>
+
+        <h2>Testing Form Validation</h2>
+
+        <p>Now let's test our forms! This is where form testing gets interesting. We need to test that validation rules work correctly for both valid and invalid input. Create <code>tests/test_forms.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_forms.py: Tests for WTForms validation
+
+import pytest
+from app.forms import RegistrationForm, LoginForm
+from app.models import User
+from app import db
+
+
+class TestRegistrationForm:
+    """Tests for the registration form."""
+    
+    def test_valid_registration(self, app, db_session):
+        """Test form with valid data."""
+        with app.test_request_context():
+            form = RegistrationForm(
+                username='newuser',
+                email='new@example.com',
+                password='password123',
+                confirm_password='password123'
+            )
+            
+            assert form.validate() is True
+    
+    def test_username_too_short(self, app, db_session):
+        """Test username minimum length validation."""
+        with app.test_request_context():
+            form = RegistrationForm(
+                username='ab',  # Too short (min is 3)
+                email='test@example.com',
+                password='password123',
+                confirm_password='password123'
+            )
+            
+            assert form.validate() is False
+            assert 'username' in form.errors
+    
+    def test_invalid_email(self, app, db_session):
+        """Test email format validation."""
+        with app.test_request_context():
+            form = RegistrationForm(
+                username='testuser',
+                email='notanemail',  # Invalid email format
+                password='password123',
+                confirm_password='password123'
+            )
+            
+            assert form.validate() is False
+            assert 'email' in form.errors
+    
+    def test_password_too_short(self, app, db_session):
+        """Test password minimum length validation."""
+        with app.test_request_context():
+            form = RegistrationForm(
+                username='testuser',
+                email='test@example.com',
+                password='short',  # Too short (min is 8)
+                confirm_password='short'
+            )
+            
+            assert form.validate() is False
+            assert 'password' in form.errors
+    
+    def test_passwords_dont_match(self, app, db_session):
+        """Test password confirmation validation."""
+        with app.test_request_context():
+            form = RegistrationForm(
+                username='testuser',
+                email='test@example.com',
+                password='password123',
+                confirm_password='different123'  # Doesn't match
+            )
+            
+            assert form.validate() is False
+            assert 'confirm_password' in form.errors
+    
+    def test_duplicate_username(self, app, db_session):
+        """Test custom validator for duplicate username."""
+        # Create an existing user
+        user = User(username='existing', email='existing@example.com')
+        user.set_password('password123')
+        db.session.add(user)
+        db.session.commit()
+        
+        # Try to register with the same username
+        with app.test_request_context():
+            form = RegistrationForm(
+                username='existing',  # Already exists
+                email='new@example.com',
+                password='password123',
+                confirm_password='password123'
+            )
+            
+            assert form.validate() is False
+            assert 'username' in form.errors
+            assert 'already taken' in str(form.errors['username'])
+    
+    def test_duplicate_email(self, app, db_session):
+        """Test custom validator for duplicate email."""
+        # Create an existing user
+        user = User(username='existing', email='existing@example.com')
+        user.set_password('password123')
+        db.session.add(user)
+        db.session.commit()
+        
+        # Try to register with the same email
+        with app.test_request_context():
+            form = RegistrationForm(
+                username='newuser',
+                email='existing@example.com',  # Already exists
+                password='password123',
+                confirm_password='password123'
+            )
+            
+            assert form.validate() is False
+            assert 'email' in form.errors
+            assert 'already registered' in str(form.errors['email'])
+
+
+class TestLoginForm:
+    """Tests for the login form."""
+    
+    def test_valid_login(self, app, db_session):
+        """Test login form with valid data."""
+        with app.test_request_context():
+            form = LoginForm(
+                username='testuser',
+                password='password123'
+            )
+            
+            assert form.validate() is True
+    
+    def test_missing_username(self, app, db_session):
+        """Test login form requires username."""
+        with app.test_request_context():
+            form = LoginForm(
+                username='',  # Empty
+                password='password123'
+            )
+            
+            assert form.validate() is False
+            assert 'username' in form.errors
+    
+    def test_missing_password(self, app, db_session):
+        """Test login form requires password."""
+        with app.test_request_context():
+            form = LoginForm(
+                username='testuser',
+                password=''  # Empty
+            )
+            
+            assert form.validate() is False
+            assert 'password' in form.errors</code></pre>
+
+        <p>These tests verify every validation rule in our forms. Notice we're testing:</p>
+
+        <ul>
+            <li>Valid data passes validation</li>
+            <li>Each validation rule fails when it should</li>
+            <li>Custom validators (uniqueness checks) work correctly</li>
+            <li>Error messages are generated</li>
+        </ul>
+
+        <p>Run the form tests:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest tests/test_forms.py -v</code></pre>
+
+        <div class="note">
+            <p><strong>Understanding app.test_request_context():</strong> You might be wondering why we use <code>with app.test_request_context()</code> in form tests. WTForms needs a Flask request context to work properly (it needs to access request data for CSRF protection and other features). The <code>test_request_context()</code> creates a fake request context for testing.</p>
+        </div>
+
+        <h2>Parametrized Form Tests</h2>
+
+        <p>Testing multiple invalid inputs can get repetitive. Let's use pytest's parametrize feature to test multiple scenarios efficiently:</p>
+
+        <pre><code class="language-python">@pytest.mark.parametrize('username,email,password,confirm,expected_field', [
+    ('ab', 'test@example.com', 'password123', 'password123', 'username'),  # Username too short
+    ('testuser', 'bademail', 'password123', 'password123', 'email'),  # Bad email
+    ('testuser', 'test@example.com', 'short', 'short', 'password'),  # Password too short
+    ('testuser', 'test@example.com', 'password123', 'different', 'confirm_password'),  # No match
+    ('', 'test@example.com', 'password123', 'password123', 'username'),  # Empty username
+])
+def test_registration_validation_errors(app, db_session, username, email, password, confirm, expected_field):
+    """Test various validation error scenarios."""
+    with app.test_request_context():
+        form = RegistrationForm(
+            username=username,
+            email=email,
+            password=password,
+            confirm_password=confirm
+        )
+        
+        assert form.validate() is False
+        assert expected_field in form.errors</code></pre>
+
+        <p>Add this test to your <code>TestRegistrationForm</code> class. This single test function will run five times with different inputs, testing all the validation scenarios efficiently!</p>
+
+        <h2>What We've Learned</h2>
+
+        <p>Take a moment to appreciate everything you've accomplished in this chapter:</p>
+
+        <ul>
+            <li>✓ You can create User models with secure password hashing</li>
+            <li>✓ You understand how to create relationships between models (User and Post)</li>
+            <li>✓ You can build forms with WTForms and various validators</li>
+            <li>✓ You know how to write custom validators for business logic</li>
+            <li>✓ You can test form validation comprehensively</li>
+            <li>✓ You understand why password hashing is critical for security</li>
+            <li>✓ You've built the foundation for a complete authentication system</li>
+        </ul>
+
+        <h2>Before You Continue...</h2>
+
+        <p>Before moving on to Chapter 5, make sure you:</p>
+
+        <ol>
+            <li>Have all model and form tests passing</li>
+            <li>Understand why we hash passwords instead of storing them</li>
+            <li>Can explain what custom validators do</li>
+            <li>Know why we use <code>app.test_request_context()</code> in form tests</li>
+            <li>Understand the relationship between User and Post models</li>
+        </ol>
+
+        <p>If something doesn't make complete sense yet, that's okay! Authentication and forms have some complexity, but these patterns will become clearer as you see them in action in the next chapter.</p>
+
+        <div class="success">
+            <strong>Next Up:</strong> In Chapter 5, you're going to bring everything together by implementing actual registration and login routes, testing Flask-Login flows, testing protected routes that require authentication, and building a complete role-based access control system. You'll learn how to test login/logout cycles, mock authenticated users in tests, and verify that users can only access what they're authorized to see. This is where FlaskBlog Pro really starts to feel like a real application!
+        </div>
+
+        <div class="nav-links">
+            <a href="chapter03.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter05.html">Next Chapter →</a>
+        </div>
+
+        <footer>
+            <p>Flask Testing Mastery - A comprehensive course on testing Flask applications</p>
+            <p style="font-size: 0.9em;">Questions or feedback? Let me know!</p>
+        </footer>
+    </div>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</body>
+</html>

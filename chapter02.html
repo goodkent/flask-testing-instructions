@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 2: Unit Testing Flask Routes and Views - Flask Testing Mastery</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/prism.css">
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="chapter01.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter03.html">Next Chapter →</a>
+        </div>
+
+        <h1>Chapter 2: Unit Testing Flask Routes and Views</h1>
+        <p class="chapter-subtitle">Learn to test individual endpoints in isolation</p>
+
+        <div class="github-links">
+            <span class="github-label">Chapter Code:</span>
+            <a href="https://github.com/goodkent/flask-testing/tree/ch02-end" class="github-link">Browse</a>
+            <a href="https://github.com/goodkent/flask-testing/archive/refs/tags/ch02-end.zip" class="github-link">Zip</a>
+            <a href="https://github.com/goodkent/flask-testing/compare/ch01-end...ch02-end" class="github-link">Diff</a>
+        </div>
+
+        <div class="intro-section">
+            <p>Welcome back! In the previous chapter, you created FlaskBlog Pro with a few simple routes and wrote tests for them. You tested GET requests that return JSON, and it felt great to see those green checkmarks, didn't it? But I have to tell you something: real applications do much more than just return static JSON.</p>
+
+            <p>Think about a blog application. You need to create posts, update them, delete them—not just read them. This means your application needs to handle POST requests to create data, PUT requests to update data, and DELETE requests to remove data. And each of these operations needs tests!</p>
+
+            <p>In this chapter, you're going to expand FlaskBlog Pro by adding a complete API for managing blog posts. You'll learn how to test all the different HTTP methods, how to send data in your tests, and how to verify that your API handles errors correctly. By the end of this chapter, you'll be able to test any Flask route with confidence, regardless of what HTTP method it uses.</p>
+        </div>
+
+        <h2>Learning Objectives</h2>
+        <ul>
+            <li>Test POST requests that create data</li>
+            <li>Test PUT requests that update existing data</li>
+            <li>Test DELETE requests and verify deletions</li>
+            <li>Understand how to send JSON data in test requests</li>
+            <li>Test error responses and validation</li>
+            <li>Write parametrized tests for testing multiple scenarios</li>
+            <li>Understand test isolation and why it matters</li>
+        </ul>
+
+        <h2>What We're Building</h2>
+
+        <p>Before we write any tests, let's talk about what we're going to build. We're going to add a complete blog post API to FlaskBlog Pro with these endpoints:</p>
+
+        <ul>
+            <li><code>GET /api/posts</code> - Get all blog posts</li>
+            <li><code>GET /api/posts/&lt;id&gt;</code> - Get a single post by ID</li>
+            <li><code>POST /api/posts</code> - Create a new post</li>
+            <li><code>PUT /api/posts/&lt;id&gt;</code> - Update an existing post</li>
+            <li><code>DELETE /api/posts/&lt;id&gt;</code> - Delete a post</li>
+        </ul>
+
+        <p>Now, you might be thinking: "Shouldn't we use a database for this?" You're absolutely right to think that! In Chapter 3, you'll learn how to test database-backed models. But for this chapter, we're going to keep things simple by storing posts in memory using a Python dictionary. This lets us focus purely on testing HTTP methods without the complexity of database setup.</p>
+
+        <div class="note">
+            <strong>Why Start Simple?</strong> I know it might seem artificial to use a dictionary instead of a real database. But there's a good reason: when you're learning testing, it's better to tackle one concept at a time. In this chapter, you're learning how to test different HTTP methods and request/response cycles. In the next chapter, you'll add database complexity. Trust me—this step-by-step approach will make both topics clearer!
+        </div>
+
+        <h2>Adding Blog Post Routes</h2>
+
+        <p>Let's add our blog post functionality. You're going to modify the <code>app/routes.py</code> file that we created in Chapter 1. Remember, we already have a blueprint called <code>bp</code> defined there. We'll add our new routes to that same blueprint.</p>
+
+        <p>Open <code>app/routes.py</code> and update it to include the following code. I'll show you the complete file so you can see how everything fits together:</p>
+
+        <pre><code class="language-python"># app/routes.py: Application routes
+
+from flask import Blueprint, jsonify, request
+
+bp = Blueprint('main', __name__)
+
+# In-memory storage for blog posts (temporary - we'll use a database in Chapter 3)
+blog_posts = {}
+next_id = 1
+
+
+@bp.route('/')
+def index():
+    """Home page route."""
+    return jsonify({
+        'message': 'Welcome to FlaskBlog Pro!',
+        'status': 'success'
+    })
+
+
+@bp.route('/health')
+def health():
+    """Health check endpoint."""
+    return jsonify({'status': 'healthy'}), 200
+
+
+@bp.route('/about')
+def about():
+    """About page route."""
+    return jsonify({
+        'name': 'FlaskBlog Pro',
+        'version': '1.0.0',
+        'description': 'A fully-tested blog platform'
+    })
+
+
+@bp.route('/api/posts', methods=['GET'])
+def get_posts():
+    """Get all blog posts."""
+    return jsonify(list(blog_posts.values()))</code></pre>
+
+        <p>Notice what we've added at the top of the file:</p>
+
+        <ul>
+            <li><code>blog_posts = {}</code> - An empty dictionary to store our posts</li>
+            <li><code>next_id = 1</code> - A counter for assigning IDs to new posts</li>
+        </ul>
+
+        <p>The <code>get_posts</code> function is our first new endpoint. It returns all the posts in our dictionary as a JSON array. Right now, if you called this endpoint, you'd get back an empty array <code>[]</code> because we haven't created any posts yet.</p>
+
+        <p>Let's add the rest of the routes:</p>
+
+        <pre><code class="language-python">@bp.route('/api/posts/&lt;int:post_id&gt;', methods=['GET'])
+def get_post(post_id):
+    """Get a single blog post by ID."""
+    post = blog_posts.get(post_id)
+    if post is None:
+        return jsonify({'error': 'Post not found'}), 404
+    return jsonify(post)
+
+
+@bp.route('/api/posts', methods=['POST'])
+def create_post():
+    """Create a new blog post."""
+    global next_id
+    
+    data = request.get_json()
+    # Check if data exists and has the required keys with non-empty values
+    if not data or not data.get('title') or not data.get('content'):
+        return jsonify({'error': 'Title and content are required'}), 400
+    
+    post = {
+        'id': next_id,
+        'title': data['title'],
+        'content': data['content']
+    }
+    blog_posts[next_id] = post
+    next_id += 1
+    
+    return jsonify(post), 201</code></pre>
+
+        <p>Let me explain what these routes do:</p>
+
+        <p><strong>get_post(post_id):</strong> This retrieves a single post by its ID. If the post doesn't exist, it returns a 404 error. This is important! You should always return appropriate HTTP status codes—404 means "not found" and that's exactly what we want when someone requests a post that doesn't exist.</p>
+
+        <p><strong>create_post():</strong> This creates a new post. Notice a few things:</p>
+
+        <ul>
+            <li>We use <code>request.get_json()</code> to get the JSON data sent by the client</li>
+            <li>We validate that both <code>title</code> and <code>content</code> are present <em>and not empty</em></li>
+            <li>Using <code>data.get('title')</code> returns <code>None</code> if the key doesn't exist, and the actual value if it does—an empty string is falsy, so our validation catches both missing and empty fields</li>
+            <li>If validation fails, we return a 400 status code (Bad Request)</li>
+            <li>If validation succeeds, we create the post and return a 201 status code (Created)</li>
+        </ul>
+
+        <p>Now let's add the update and delete routes:</p>
+
+        <pre><code class="language-python">@bp.route('/api/posts/&lt;int:post_id&gt;', methods=['PUT'])
+def update_post(post_id):
+    """Update an existing blog post."""
+    post = blog_posts.get(post_id)
+    if post is None:
+        return jsonify({'error': 'Post not found'}), 404
+    
+    data = request.get_json()
+    if 'title' in data:
+        post['title'] = data['title']
+    if 'content' in data:
+        post['content'] = data['content']
+    
+    return jsonify(post)
+
+
+@bp.route('/api/posts/&lt;int:post_id&gt;', methods=['DELETE'])
+def delete_post(post_id):
+    """Delete a blog post."""
+    if post_id not in blog_posts:
+        return jsonify({'error': 'Post not found'}), 404
+    
+    del blog_posts[post_id]
+    return '', 204</code></pre>
+
+        <p><strong>update_post(post_id):</strong> This updates an existing post. Notice that we only update the fields that are provided—if someone sends just <code>title</code>, we only update the title and leave the content unchanged. This is called a "partial update" and it's a common pattern in REST APIs.</p>
+
+        <p><strong>delete_post(post_id):</strong> This deletes a post and returns a 204 status code (No Content). A 204 response means "the operation succeeded, but I don't have any content to send back." This is perfect for DELETE operations!</p>
+
+        <h2>Try It Out: Manual Testing with curl</h2>
+
+        <p>Before we write automated tests, let's verify that our API actually works. This is a good habit—it's easier to debug your application code when it's separate from your test code. If you want to see your API in action, you can start the Flask development server and make some requests with curl.</p>
+
+        <p>First, start your Flask application. You'll need to set the Flask app environment variable and run the development server:</p>
+
+        <pre><code class="language-bash">(venv) $ export FLASK_APP=app
+(venv) $ flask run</code></pre>
+
+        <div class="note">
+            <strong>Windows users:</strong> On Windows, use <code>set FLASK_APP=app</code> instead of <code>export</code>. On PowerShell, use <code>$env:FLASK_APP="app"</code>.
+        </div>
+
+        <p>Flask will start and show you the address where it's running. You'll see something like:</p>
+
+        <pre><code class="language-bash"> * Running on http://127.0.0.1:5000</code></pre>
+
+        <div class="note">
+            <strong>Important:</strong> Flask typically displays <code>http://127.0.0.1:5000</code> in the console. While <code>localhost</code> and <code>127.0.0.1</code> usually point to the same place (your local machine), <strong>use the exact address Flask shows you</strong>. If you see <code>127.0.0.1</code>, use that in your curl commands. If you see <code>localhost</code>, use that. Some systems have issues resolving localhost, so it's best to match what Flask displays.
+        </div>
+
+        <p>In a separate terminal window, try these curl commands (using the address Flask showed you):</p>
+
+        <pre><code class="language-bash"># First, check that the API is working by getting all posts (should be empty)
+$ curl http://127.0.0.1:5000/api/posts
+[]
+
+# Create a new post
+$ curl -X POST http://127.0.0.1:5000/api/posts \
+  -H "Content-Type: application/json" \
+  -d '{"title": "My First Post", "content": "Hello, World!"}'
+{"content":"Hello, World!","id":1,"title":"My First Post"}
+
+# Get all posts (should now show your post)
+$ curl http://127.0.0.1:5000/api/posts
+[{"content":"Hello, World!","id":1,"title":"My First Post"}]
+
+# Get a specific post
+$ curl http://127.0.0.1:5000/api/posts/1
+{"content":"Hello, World!","id":1,"title":"My First Post"}
+
+# Update the post
+$ curl -X PUT http://127.0.0.1:5000/api/posts/1 \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Updated Title"}'
+{"content":"Hello, World!","id":1,"title":"Updated Title"}
+
+# Delete the post
+$ curl -X DELETE http://127.0.0.1:5000/api/posts/1
+# (returns no content, just a 204 status code)
+
+# Verify it's gone
+$ curl http://127.0.0.1:5000/api/posts/1
+{"error":"Post not found"}</code></pre>
+
+        <p>Did you see the API working? Excellent! You've just manually tested the complete lifecycle of a blog post. Now, if you had any issues, this is a good time to debug them. When you're satisfied that the routes work correctly, stop the Flask server (Ctrl+C) and let's write some automated tests so you never have to do this manual checking again!</p>
+
+        <div class="note">
+            <strong>Why manual testing first?</strong> You might wonder why we're doing manual testing when this is a course about automated testing. Here's the thing: when you're building something new, it's often helpful to see it work manually first. It gives you confidence that your application code is correct before you add the complexity of tests. Plus, understanding how to test your API manually makes you better at writing automated tests—you know exactly what behavior you're trying to verify!
+        </div>
+
+        <h2>Testing GET Requests</h2>
+
+        <p>Now that we have our routes, let's write tests! You already know how to test GET requests from Chapter 1, but let's make sure our new endpoints work correctly.</p>
+
+        <p>Open <code>tests/test_routes.py</code> and add these new tests (keep your existing tests from Chapter 1!):</p>
+
+        <pre><code class="language-python"># tests/test_routes.py: Tests for application routes
+
+import json
+
+
+def test_index_route(client):
+    """Test the index route returns correct response."""
+    response = client.get('/')
+    
+    assert response.status_code == 200
+    
+    data = response.get_json()
+    assert data['message'] == 'Welcome to FlaskBlog Pro!'
+    assert data['status'] == 'success'
+
+
+def test_health_route(client):
+    """Test the health check endpoint."""
+    response = client.get('/health')
+    
+    assert response.status_code == 200
+    
+    data = response.get_json()
+    assert data['status'] == 'healthy'
+
+
+def test_about_route(client):
+    """Test the about page returns correct information."""
+    response = client.get('/about')
+    
+    assert response.status_code == 200
+    
+    data = response.get_json()
+    assert data['name'] == 'FlaskBlog Pro'
+    assert data['version'] == '1.0.0'
+    assert data['description'] == 'A fully-tested blog platform'
+
+
+# New tests for blog post API
+
+def test_get_posts_empty(client):
+    """Test getting posts when none exist."""
+    response = client.get('/api/posts')
+    
+    assert response.status_code == 200
+    assert response.is_json
+    assert response.get_json() == []
+
+
+def test_get_single_post_not_found(client):
+    """Test getting a non-existent post returns 404."""
+    response = client.get('/api/posts/999')
+    
+    assert response.status_code == 404
+    data = response.get_json()
+    assert 'error' in data
+    assert data['error'] == 'Post not found'</code></pre>
+
+        <p>Notice how we're testing the error case (<code>test_get_single_post_not_found</code>). This is crucial! You should always test how your application handles errors, not just the happy path. What if someone tries to get a post that doesn't exist? Your tests should verify that the right error is returned.</p>
+
+        <p>Run your tests to make sure everything passes so far:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest -v</code></pre>
+
+        <p>You should see 5 passing tests. If not, check that you've saved all your files and that you're running pytest from the project root directory.</p>
+
+        <h2>Testing POST Requests</h2>
+
+        <p>Now comes the interesting part: testing requests that send data to the server. When you test a POST request, you need to send JSON data along with the request. The test client makes this straightforward.</p>
+
+        <p>Add these tests to <code>test_routes.py</code>:</p>
+
+        <pre><code class="language-python">def test_create_post(client):
+    """Test creating a new blog post."""
+    post_data = {
+        'title': 'My First Post',
+        'content': 'This is the content of my first blog post.'
+    }
+    
+    response = client.post(
+        '/api/posts',
+        data=json.dumps(post_data),
+        content_type='application/json'
+    )
+    
+    assert response.status_code == 201
+    data = response.get_json()
+    assert data['title'] == 'My First Post'
+    assert data['content'] == 'This is the content of my first blog post.'
+    assert 'id' in data
+    assert data['id'] == 1
+
+
+def test_create_post_missing_title(client):
+    """Test creating a post without a title fails."""
+    post_data = {'content': 'Content without a title'}
+    
+    response = client.post(
+        '/api/posts',
+        data=json.dumps(post_data),
+        content_type='application/json'
+    )
+    
+    assert response.status_code == 400
+    data = response.get_json()
+    assert 'error' in data
+
+
+def test_create_post_missing_content(client):
+    """Test creating a post without content fails."""
+    post_data = {'title': 'Title without content'}
+    
+    response = client.post(
+        '/api/posts',
+        data=json.dumps(post_data),
+        content_type='application/json'
+    )
+    
+    assert response.status_code == 400
+    data = response.get_json()
+    assert 'error' in data</code></pre>
+
+        <p>Let me explain what's happening in these tests:</p>
+
+        <p><strong>json.dumps(post_data):</strong> This converts our Python dictionary to a JSON string. When you send data to an API, it needs to be in JSON format, not a Python dictionary.</p>
+
+        <p><strong>content_type='application/json':</strong> This sets the Content-Type header to tell Flask that we're sending JSON data. This is important! Without it, Flask won't know how to parse the data.</p>
+
+        <p>One aspect that may seem confusing at first is why we need to manually convert to JSON and set the content type. Can't Flask do this automatically? Well, not in tests! And that's actually a good thing—by being explicit, we're testing that our API correctly handles JSON, just like a real client would send it.</p>
+
+        <h2>Understanding Test Isolation</h2>
+
+        <p>Before we continue, I want to address something important. You might be wondering: "If I create a post in one test, won't it still be there in the next test?"</p>
+
+        <p>This is an excellent question, and it touches on a critical testing concept called <strong>test isolation</strong>. Each test should be completely independent—it shouldn't depend on or affect other tests.</p>
+
+        <p>In our case, test isolation works because of how our fixtures are set up. Remember the <code>client</code> fixture in <code>conftest.py</code>? It creates a fresh Flask application for each test. When Python imports our <code>routes.py</code> module fresh for each test, the <code>blog_posts</code> dictionary starts empty again.</p>
+
+        <p>Try this experiment: run your tests multiple times:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest -v
+(venv) $ pytest -v  # Run again
+(venv) $ pytest -v  # And once more</code></pre>
+
+        <p>The tests should pass every time with identical results. This is what we want—predictable, repeatable tests. If your tests pass sometimes and fail other times, that's a sign of a test isolation problem.</p>
+
+        <div class="note">
+            <strong>A Note on Test Isolation:</strong> In Chapter 3, when we add a database, maintaining test isolation becomes more complex. You'll learn about database fixtures and rollback strategies that ensure each test starts with a clean database state. But the principle remains the same: tests should never depend on each other.
+        </div>
+
+        <h2>Testing PUT Requests</h2>
+
+        <p>PUT requests update existing resources. To test them, we need to first create a post, then update it. This is perfectly fine! Even though it means each test does two operations, it's still testing one logical behavior: "can I update a post?"</p>
+
+        <pre><code class="language-python">def test_update_post(client):
+    """Test updating an existing post."""
+    # First, create a post
+    post_data = {'title': 'Original Title', 'content': 'Original content'}
+    create_response = client.post(
+        '/api/posts',
+        data=json.dumps(post_data),
+        content_type='application/json'
+    )
+    post_id = create_response.get_json()['id']
+    
+    # Now update it
+    update_data = {'title': 'Updated Title'}
+    response = client.put(
+        f'/api/posts/{post_id}',
+        data=json.dumps(update_data),
+        content_type='application/json'
+    )
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['title'] == 'Updated Title'
+    assert data['content'] == 'Original content'  # Should be unchanged
+    assert data['id'] == post_id
+
+
+def test_update_nonexistent_post(client):
+    """Test updating a post that doesn't exist."""
+    update_data = {'title': 'Updated Title'}
+    response = client.put(
+        '/api/posts/999',
+        data=json.dumps(update_data),
+        content_type='application/json'
+    )
+    
+    assert response.status_code == 404
+    data = response.get_json()
+    assert 'error' in data</code></pre>
+
+        <p>Notice how <code>test_update_post</code> verifies that the content field wasn't changed when we only sent a new title. This is important! When testing update operations, you should verify that only the intended fields changed and everything else stayed the same.</p>
+
+        <h2>Testing DELETE Requests</h2>
+
+        <p>DELETE requests are interesting because they should make something disappear. So our tests need to verify not just that the DELETE request succeeded, but that the resource is actually gone:</p>
+
+        <pre><code class="language-python">def test_delete_post(client):
+    """Test deleting a post."""
+    # Create a post first
+    post_data = {'title': 'To Be Deleted', 'content': 'This post will be deleted'}
+    create_response = client.post(
+        '/api/posts',
+        data=json.dumps(post_data),
+        content_type='application/json'
+    )
+    post_id = create_response.get_json()['id']
+    
+    # Delete it
+    response = client.delete(f'/api/posts/{post_id}')
+    
+    assert response.status_code == 204
+    assert response.data == b''  # 204 responses have no body
+    
+    # Verify it's really gone
+    get_response = client.get(f'/api/posts/{post_id}')
+    assert get_response.status_code == 404
+
+
+def test_delete_nonexistent_post(client):
+    """Test deleting a post that doesn't exist."""
+    response = client.delete('/api/posts/999')
+    
+    assert response.status_code == 404</code></pre>
+
+        <p>Look at what <code>test_delete_post</code> does: it deletes the post, checks that the DELETE request succeeded (204), and then makes another GET request to verify the post is truly gone (404). This is testing the complete behavior, not just the immediate response.</p>
+
+        <h2>Testing Complete Workflows</h2>
+
+        <p>Now that we have all the individual pieces tested, let's write a test that exercises a complete workflow—creating a post, retrieving it, updating it, and then deleting it:</p>
+
+        <pre><code class="language-python">def test_post_lifecycle(client):
+    """Test the complete lifecycle of a blog post."""
+    # Create a post
+    post_data = {'title': 'Lifecycle Test', 'content': 'Testing the full lifecycle'}
+    create_response = client.post(
+        '/api/posts',
+        data=json.dumps(post_data),
+        content_type='application/json'
+    )
+    assert create_response.status_code == 201
+    post_id = create_response.get_json()['id']
+    
+    # Retrieve it
+    get_response = client.get(f'/api/posts/{post_id}')
+    assert get_response.status_code == 200
+    assert get_response.get_json()['title'] == 'Lifecycle Test'
+    
+    # Update it
+    update_response = client.put(
+        f'/api/posts/{post_id}',
+        data=json.dumps({'title': 'Updated Lifecycle Test'}),
+        content_type='application/json'
+    )
+    assert update_response.status_code == 200
+    
+    # Delete it
+    delete_response = client.delete(f'/api/posts/{post_id}')
+    assert delete_response.status_code == 204
+    
+    # Verify it's gone
+    final_get = client.get(f'/api/posts/{post_id}')
+    assert final_get.status_code == 404</code></pre>
+
+        <p>This test verifies that all the pieces work together correctly. If any step fails, you'll know exactly which operation broke the workflow.</p>
+
+        <h2>Parametrized Tests: Testing Multiple Scenarios</h2>
+
+        <p>Here's a situation you'll encounter often: you want to test the same behavior with different inputs. For example, testing that validation catches various types of invalid data. You could write a separate test for each case, but that's repetitive. pytest has a better solution: <strong>parametrized tests</strong>.</p>
+
+        <p>Let's write a parametrized test that checks validation for different invalid inputs:</p>
+
+        <pre><code class="language-python">import pytest
+
+
+@pytest.mark.parametrize('post_data,expected_status', [
+    ({}, 400),  # Empty data
+    ({'title': 'Only Title'}, 400),  # Missing content
+    ({'content': 'Only Content'}, 400),  # Missing title
+    ({'title': '', 'content': 'Empty title'}, 400),  # Empty title string
+])
+def test_create_post_validation(client, post_data, expected_status):
+    """Test various invalid inputs for post creation."""
+    response = client.post(
+        '/api/posts',
+        data=json.dumps(post_data),
+        content_type='application/json'
+    )
+    
+    assert response.status_code == expected_status</code></pre>
+
+        <p>This single test function will run four times—once for each set of parameters! When you run <code>pytest -v</code>, you'll see each one listed separately:</p>
+
+        <pre><code class="language-bash">test_routes.py::test_create_post_validation[post_data0-400] PASSED
+test_routes.py::test_create_post_validation[post_data1-400] PASSED
+test_routes.py::test_create_post_validation[post_data2-400] PASSED
+test_routes.py::test_create_post_validation[post_data3-400] PASSED</code></pre>
+
+        <p>Parametrized tests are incredibly powerful for reducing duplication while maintaining clear test coverage. You'll use this pattern frequently!</p>
+
+        <h2>Running All Your Tests</h2>
+
+        <p>Let's run all the tests we've written:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest -v</code></pre>
+
+        <p>You should see output like this:</p>
+
+        <pre><code class="language-bash">tests/test_routes.py::test_index_route PASSED
+tests/test_routes.py::test_health_route PASSED
+tests/test_routes.py::test_about_route PASSED
+tests/test_routes.py::test_get_posts_empty PASSED
+tests/test_routes.py::test_get_single_post_not_found PASSED
+tests/test_routes.py::test_create_post PASSED
+tests/test_routes.py::test_create_post_missing_title PASSED
+tests/test_routes.py::test_create_post_missing_content PASSED
+tests/test_routes.py::test_update_post PASSED
+tests/test_routes.py::test_update_nonexistent_post PASSED
+tests/test_routes.py::test_delete_post PASSED
+tests/test_routes.py::test_delete_nonexistent_post PASSED
+tests/test_routes.py::test_post_lifecycle PASSED
+tests/test_routes.py::test_create_post_validation[post_data0-400] PASSED
+tests/test_routes.py::test_create_post_validation[post_data1-400] PASSED
+tests/test_routes.py::test_create_post_validation[post_data2-400] PASSED
+tests/test_routes.py::test_create_post_validation[post_data3-400] PASSED
+
+========== 17 passed in 0.15s ==========</code></pre>
+
+        <div class="success">
+            <strong>Congratulations!</strong> You now have 17 passing tests covering a complete REST API! This is a significant achievement. You've learned how to test every major HTTP method, how to send and receive JSON data, and how to verify both success and error cases.
+        </div>
+
+        <h2>Troubleshooting</h2>
+
+        <p>Did you have trouble running the tests? Here are some common issues:</p>
+
+        <h3>Problem: Tests Fail with "Post not found" errors</h3>
+        <p><strong>Symptom:</strong> Tests that create and then retrieve posts are failing</p>
+        <p><strong>Solution:</strong> Make sure you're using <code>post_id = create_response.get_json()['id']</code> to get the ID from the create response, not hard-coding an ID value.</p>
+
+        <h3>Problem: JSON Parsing Errors</h3>
+        <p><strong>Symptom:</strong> <code>TypeError: the JSON object must be str, bytes or bytearray, not dict</code></p>
+        <p><strong>Solution:</strong> Remember to use <code>json.dumps(post_data)</code> to convert your dictionary to a JSON string when sending data. Don't forget to add <code>import json</code> at the top of your test file!</p>
+
+        <h3>Problem: Tests Pass Individually But Fail Together</h3>
+        <p><strong>Symptom:</strong> Running one test works fine, but running all tests causes failures</p>
+        <p><strong>Solution:</strong> This suggests test isolation issues. The most likely cause is that <code>blog_posts</code> isn't being reset between tests. In Chapter 3, you'll learn proper fixture management to prevent this. For now, you can add a reset function to <code>conftest.py</code>:</p>
+
+        <pre><code class="language-python"># tests/conftest.py
+import pytest
+from app import create_app
+
+
+@pytest.fixture
+def app():
+    """Create application for testing."""
+    from app import routes
+    routes.blog_posts.clear()  # Reset posts
+    routes.next_id = 1  # Reset ID counter
+    
+    app = create_app('config.TestingConfig')
+    yield app
+
+
+@pytest.fixture
+def client(app):
+    """Create a test client for the app."""
+    return app.test_client()</code></pre>
+
+        <h3>Problem: Missing Import Error</h3>
+        <p><strong>Symptom:</strong> <code>NameError: name 'json' is not defined</code></p>
+        <p><strong>Solution:</strong> Add <code>import json</code> at the very top of <code>tests/test_routes.py</code>, right after the file comment.</p>
+
+        <h2>Testing Best Practices You've Learned</h2>
+
+        <p>Let's recap the important testing principles you've learned in this chapter:</p>
+
+        <ol>
+            <li><strong>Test both success and error cases:</strong> Always verify that your application handles errors correctly, not just the happy path.</li>
+            <li><strong>Test complete behaviors:</strong> When you delete something, verify it's actually gone. When you update something, verify the changes took effect.</li>
+            <li><strong>Maintain test isolation:</strong> Each test should be independent and not rely on state from other tests.</li>
+            <li><strong>Use descriptive test names:</strong> Function names like <code>test_delete_nonexistent_post</code> clearly describe what's being tested.</li>
+            <li><strong>Use parametrized tests:</strong> When testing similar scenarios with different data, parametrized tests eliminate duplication.</li>
+            <li><strong>Test workflows:</strong> Sometimes a single test that exercises multiple operations is valuable for testing how things work together.</li>
+        </ol>
+
+        <h2>Hands-On Exercise</h2>
+
+        <p>Now it's your turn to practice! I want you to add a new feature to the blog API and write comprehensive tests for it.</p>
+
+        <h3>The Challenge: Add Published Status</h3>
+
+        <p>Add a "published" status to blog posts. Each post should have a <code>published</code> field (boolean) that defaults to <code>False</code> when a post is created.</p>
+
+        <p><strong>Requirements:</strong></p>
+
+        <ol>
+            <li>Modify <code>create_post()</code> to accept an optional <code>published</code> field that defaults to <code>False</code></li>
+            <li>Add a new endpoint <code>GET /api/posts/published</code> that returns only published posts</li>
+            <li>Add a new endpoint <code>POST /api/posts/&lt;post_id&gt;/publish</code> that sets a post's published status to <code>True</code></li>
+        </ol>
+
+        <h3>Success Criteria</h3>
+
+        <p>You should write tests that verify:</p>
+
+        <ul>
+            <li>Creating a post without specifying <code>published</code> sets it to <code>False</code></li>
+            <li>Creating a post with <code>published: true</code> works correctly</li>
+            <li>The <code>/api/posts/published</code> endpoint only returns published posts</li>
+            <li>The publish endpoint changes a post's status from <code>False</code> to <code>True</code></li>
+            <li>Publishing a non-existent post returns a 404 error</li>
+        </ul>
+
+        <h3>Hints</h3>
+
+        <ul>
+            <li>In <code>create_post()</code>, use <code>data.get('published', False)</code> to get the published value with a default</li>
+            <li>For the published posts endpoint, use a list comprehension to filter: <code>[p for p in blog_posts.values() if p.get('published')]</code></li>
+            <li>The publish endpoint should be very simple—just update the post's <code>published</code> field</li>
+            <li>Follow the same patterns you've learned: test success cases, error cases, and verify the complete behavior</li>
+        </ul>
+
+        <h3>Check Your Work</h3>
+
+        <p>When you're done, run your tests:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest -v</code></pre>
+
+        <p>You should have at least 5 new passing tests! If you get stuck, review the examples in this chapter. The patterns are all there—you're just applying them to new endpoints.</p>
+
+        <h2>What We've Learned</h2>
+
+        <p>Take a moment to appreciate what you've accomplished:</p>
+
+        <ul>
+            <li>✓ You can test GET, POST, PUT, and DELETE requests</li>
+            <li>✓ You know how to send JSON data in test requests</li>
+            <li>✓ You can test error responses and validation</li>
+            <li>✓ You understand test isolation and why it's important</li>
+            <li>✓ You can write parametrized tests</li>
+            <li>✓ You can test complete workflows with multiple operations</li>
+            <li>✓ You have a solid foundation for testing any REST API</li>
+        </ul>
+
+        <h2>Before You Continue...</h2>
+
+        <p>Before moving on to Chapter 3, verify that:</p>
+
+        <ol>
+            <li>All your tests pass (<code>pytest -v</code> should show 17+ passing tests)</li>
+            <li>You understand how to use <code>json.dumps()</code> and why it's necessary</li>
+            <li>You can explain what test isolation means</li>
+            <li>You've completed the hands-on exercise (or at least attempted it!)</li>
+        </ol>
+
+        <p>If something doesn't make complete sense yet, don't worry! Testing takes practice. The more tests you write, the more natural it becomes.</p>
+
+        <div class="success">
+            <strong>Next Up:</strong> In Chapter 3, we're going to replace our in-memory dictionary with a real database using SQLAlchemy. You'll learn how to set up test databases, create fixtures that provide test data, use factories to generate sample data, and implement transaction rollback strategies to keep your tests fast and isolated. This is where testing gets really interesting!
+        </div>
+
+        <div class="nav-links">
+            <a href="index.html">← Index</a>
+            <a href="chapter01.html">← Previous: Testing Fundamentals</a>
+            <a href="chapter03.html">Next: Testing Database Models →</a>
+        </div>
+
+        <footer>
+            <p>Flask Testing Mastery - A comprehensive course on testing Flask applications</p>
+            <p style="font-size: 0.9em;">Questions or feedback? Let me know!</p>
+        </footer>
+    </div>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</body>
+</html>

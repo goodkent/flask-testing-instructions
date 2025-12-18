@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 1: Testing Fundamentals and Setup - Flask Testing Mastery</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/prism.css">
+</head>
+<body>
+    <div class="nav-links">
+        <a href="index.html">← Index</a>
+        <a href="chapter02.html">Next Chapter →</a>
+    </div>
+
+    <h1>Chapter 1: Testing Fundamentals and Setup</h1>
+
+    <div class="github-links">
+        <strong>GitHub Links for This Chapter:</strong><br>
+        <a href="https://github.com/goodkent/flask-testing/tree/ch01-end">Browse</a>
+        <a href="https://github.com/goodkent/flask-testing/archive/ch01-end.zip">Download ZIP</a>
+        <a href="https://github.com/goodkent/flask-testing/compare/v0.0...ch01-end">View Diff</a>
+    </div>
+
+    <h2>Welcome to Flask Testing Mastery!</h2>
+
+    <p>Hello! If you're reading this, you've probably written some Flask applications before. Maybe you've built a simple blog, an API, or even something more complex. But here's a question: when you make changes to your code, how do you know you haven't broken something?</p>
+
+    <p>If you're like most developers when they start out, you probably do manual testing. You run your application, click through the pages, try different inputs, and hope everything works. That's perfectly normal! But imagine doing that every single time you make a change. As your application grows, this becomes impossible.</p>
+
+    <p>I'm going to show you a better way. By the end of this chapter, you're going to have a Flask application with automated tests that you can run with a single command. These tests will give you confidence that your code works, and more importantly, they'll catch bugs before your users do.</p>
+
+    <p>The application we'll build together is called "FlaskBlog Pro". Don't worry—we're starting very simple. In this chapter, you'll create just a basic Flask application with one or two routes, and you'll write your first tests for them. If this seems too easy, trust me: we need to start here. Every chapter will build on the previous one, and by Chapter 15, you'll have a production-ready blog platform with comprehensive test coverage.</p>
+
+    <h2>Learning Objectives</h2>
+
+    <p>In this chapter, you are going to learn:</p>
+    <ul>
+        <li>What the testing pyramid is and why it matters</li>
+        <li>When to use unit tests, integration tests, and end-to-end tests</li>
+        <li>How to set up pytest for Flask testing</li>
+        <li>How to structure your project for testability</li>
+        <li>How to configure your tests (test databases, test configs)</li>
+        <li>How to write your first test for a Flask route</li>
+    </ul>
+
+    <h2>The Testing Pyramid: Your Testing Strategy</h2>
+
+    <p>Before we dive into code, I want to tell you about a concept that will guide everything we do in this course: the testing pyramid.</p>
+
+    <p>Imagine a pyramid. At the bottom, you have lots of small, fast tests. At the top, you have fewer, larger, slower tests. This pyramid represents an ideal testing strategy:</p>
+
+    <div class="directory-tree">
+           /\
+          /  \  ← End-to-End Tests (Few, Slow, Expensive)
+         /    \
+        /------\
+       /        \  ← Integration Tests (Some, Medium Speed)
+      /          \
+     /------------\
+    /              \  ← Unit Tests (Many, Fast, Cheap)
+   /________________\
+    </div>
+
+    <p><strong>Unit Tests</strong> (bottom of the pyramid): These test individual functions or components in isolation. They're fast, easy to write, and you should have many of them. When you test a single route that doesn't touch a database, that's a unit test.</p>
+
+    <p><strong>Integration Tests</strong> (middle): These test how different parts of your application work together. For example, testing a route that saves data to a database is an integration test because it involves both your route logic and the database.</p>
+
+    <p><strong>End-to-End Tests</strong> (top): These test your entire application as a user would use it, often with a real browser. They're slow and can be fragile, so you should have fewer of them.</p>
+
+    <div class="note">
+        <strong>Why This Matters:</strong> You might be wondering why we don't just write end-to-end tests for everything. After all, if they test the entire application, aren't they better? The problem is speed and reliability. A unit test runs in milliseconds. An end-to-end test might take seconds. If you have 1,000 tests, that difference adds up! Plus, when an end-to-end test fails, it's harder to figure out what went wrong.
+    </div>
+
+    <h3>When to Use Each Type of Test</h3>
+
+    <table>
+        <tr>
+            <th>Test Type</th>
+            <th>Use When</th>
+            <th>Example</th>
+        </tr>
+        <tr>
+            <td><strong>Unit Test</strong></td>
+            <td>Testing logic in isolation, functions, helpers, individual routes</td>
+            <td>A route that returns JSON data</td>
+        </tr>
+        <tr>
+            <td><strong>Integration Test</strong></td>
+            <td>Testing components working together, database interactions</td>
+            <td>Creating a user and then logging in</td>
+        </tr>
+        <tr>
+            <td><strong>End-to-End Test</strong></td>
+            <td>Testing critical user workflows, UI interactions</td>
+            <td>Complete checkout process in an e-commerce site</td>
+        </tr>
+    </table>
+
+    <p>In this course, we'll focus primarily on unit and integration tests because those are where you'll spend 90% of your testing effort. We'll cover end-to-end testing in Chapter 10, but by then, you'll have a solid foundation.</p>
+
+    <h2>Setting Up Your Development Environment</h2>
+
+    <p>Now that you understand why testing matters, let's set up your environment. I'm going to show you how to create a virtual environment, install the necessary packages, and structure your project for success.</p>
+
+    <h3>Creating a Virtual Environment</h3>
+
+    <p>First, you need a virtual environment. If you've followed Flask tutorials before, you know why this is important: it keeps your project's dependencies separate from your system Python.</p>
+
+    <p><strong>On Mac OS X and Linux:</strong></p>
+    <pre><code class="language-bash">$ python3 -m venv venv
+$ source venv/bin/activate
+(venv) $</code></pre>
+
+    <p><strong>On Microsoft Windows:</strong></p>
+    <pre><code class="language-bash">$ python -m venv venv
+$ venv\Scripts\activate
+(venv) $</code></pre>
+
+    <div class="note">
+        <strong>Note:</strong> If you are using Microsoft Windows and the above command doesn't work, you may need to run <code>Set-ExecutionPolicy RemoteSigned</code> in PowerShell as an administrator first. This is a Windows security setting that prevents scripts from running.
+    </div>
+
+    <p>After activating your virtual environment, you'll see <code>(venv)</code> at the beginning of your command prompt. This tells you that you're working inside your virtual environment. Virtual environments have the added benefit that they are owned by the user who creates them, so they don't require an administrator account.</p>
+
+    <h3>Installing Flask and pytest</h3>
+
+    <p>Now let's install the packages we need. For this chapter, we only need Flask and pytest:</p>
+
+    <pre><code class="language-bash">(venv) $ pip install flask pytest</code></pre>
+
+    <p>You should see output showing that Flask, pytest, and their dependencies are being installed. When it's done, you can verify the installation:</p>
+
+    <pre><code class="language-bash">(venv) $ python -c "import flask; import pytest; print('Success!')"
+Success!</code></pre>
+
+    <p>If you see "Success!", you're ready to continue. If you see an error, double-check that your virtual environment is activated.</p>
+
+    <h2>Project Structure for Testable Flask Applications</h2>
+
+    <p>One aspect that may seem confusing at first is how to structure your Flask application so that it's easy to test. I'm going to show you a structure that works well for small to medium projects. As your application grows, this structure will scale with you.</p>
+
+    <p>Create a directory for your project and set up the following structure:</p>
+
+    <pre><code class="language-bash">(venv) $ mkdir flaskblog
+(venv) $ cd flaskblog
+(venv) $ mkdir app tests</code></pre>
+
+    <p>Now create the files we'll need:</p>
+
+    <pre><code class="language-bash">(venv) $ touch app/__init__.py app/routes.py
+(venv) $ touch tests/__init__.py tests/conftest.py
+(venv) $ touch config.py</code></pre>
+
+    <p>Your directory structure should now look like this:</p>
+
+    <div class="directory-tree">flaskblog/
+  venv/
+  app/
+    __init__.py
+    routes.py
+  tests/
+    __init__.py
+    conftest.py
+  config.py</div>
+
+    <p>Just to make sure you are doing everything correctly, let's verify the structure:</p>
+
+    <pre><code class="language-bash">(venv) $ ls -R
+.:
+app  config.py  tests  venv
+
+./app:
+__init__.py  routes.py
+
+./tests:
+__init__.py  conftest.py</code></pre>
+
+    <p>Perfect! Now let's talk about what each file does:</p>
+
+    <ul>
+        <li><code>app/__init__.py</code>: This creates our Flask application. We'll use the "application factory" pattern here.</li>
+        <li><code>app/routes.py</code>: This is where our Flask routes will live.</li>
+        <li><code>tests/conftest.py</code>: This is a special pytest file where we'll configure our tests.</li>
+        <li><code>config.py</code>: This is where we'll put configuration for our app, including test configuration.</li>
+    </ul>
+
+    <div class="note">
+        <strong>Why This Structure?</strong> You might be wondering why we're creating an <code>app</code> directory instead of just putting everything in the root. This pattern is called the "application package" structure, and it has several benefits: it keeps your code organized, makes imports cleaner, and (most importantly for us) makes your application much easier to test. Trust me, this structure will make sense very soon!
+    </div>
+
+    <h2>Creating Your Flask Application</h2>
+
+    <p>Now let's create the simplest possible Flask application. We're going to use the application factory pattern, which creates and configures a Flask app instance. This pattern is essential for testing because it allows you to create multiple app instances with different configurations.</p>
+
+    <p>Open <code>config.py</code> and add this code:</p>
+
+    <pre><code class="language-python"># config.py: Application configuration
+
+class Config:
+    """Base configuration."""
+    SECRET_KEY = 'dev-secret-key'  # Change this in production!
+    
+
+class TestingConfig(Config):
+    """Configuration for testing."""
+    TESTING = True</code></pre>
+
+    <p>This configuration file defines two classes: <code>Config</code> (the base configuration) and <code>TestingConfig</code> (specific to testing). The <code>TESTING = True</code> setting tells Flask we're in testing mode. We'll add more configuration options in later chapters when we introduce databases.</p>
+
+    <p>Now, let's create the application factory. Open <code>app/__init__.py</code> and add:</p>
+
+    <pre><code class="language-python"># app/__init__.py: Application factory
+
+from flask import Flask
+
+
+def create_app(config_class='config.Config'):
+    """Create and configure the Flask application."""
+    app = Flask(__name__)
+    app.config.from_object(config_class)
+    
+    # Register routes
+    from app import routes
+    app.register_blueprint(routes.bp)
+    
+    return app</code></pre>
+
+    <p>Let's break down what this code does:</p>
+
+    <ol>
+        <li>The <code>create_app</code> function creates a new Flask application instance</li>
+        <li>It accepts a <code>config_class</code> parameter that defaults to our base configuration</li>
+        <li>It loads the configuration using <code>app.config.from_object()</code></li>
+        <li>It imports and registers our routes</li>
+        <li>It returns the configured app</li>
+    </ol>
+
+    <p>Now let's create a simple route. Open <code>app/routes.py</code>:</p>
+
+    <pre><code class="language-python"># app/routes.py: Application routes
+
+from flask import Blueprint, jsonify
+
+bp = Blueprint('main', __name__)
+
+
+@bp.route('/')
+def index():
+    """Home page route."""
+    return jsonify({
+        'message': 'Welcome to FlaskBlog Pro!',
+        'status': 'success'
+    })
+
+
+@bp.route('/health')
+def health():
+    """Health check endpoint."""
+    return jsonify({'status': 'healthy'}), 200</code></pre>
+
+    <p>We're using Flask Blueprints here, which is another best practice. Blueprints help organize your routes and make testing easier. We've created two simple routes:</p>
+
+    <ul>
+        <li><code>/</code>: Returns a welcome message</li>
+        <li><code>/health</code>: A health check endpoint (these are useful for monitoring in production)</li>
+    </ul>
+
+    <p>Believe it or not, you now have a complete Flask application! Let's test it manually to make sure it works:</p>
+
+    <pre><code class="language-python">(venv) $ python
+>>> from app import create_app
+>>> app = create_app()
+>>> client = app.test_client()
+>>> response = client.get('/')
+>>> response.get_json()
+{'message': 'Welcome to FlaskBlog Pro!', 'status': 'success'}
+>>> exit()</code></pre>
+
+    <p>If you see the JSON response, congratulations! Your application works. But we're not going to do this manual testing every time. Let's write automated tests instead.</p>
+
+    <h2>Writing Your First Test</h2>
+
+    <p>Now comes the exciting part: writing your first test! Before we write any code, let me explain what we're going to do.</p>
+
+    <p>We're going to test our <code>/</code> route. Specifically, we're going to verify:</p>
+    <ol>
+        <li>The route returns a 200 status code (success)</li>
+        <li>The response contains JSON</li>
+        <li>The JSON contains the message we expect</li>
+    </ol>
+
+    <p>First, let's configure pytest. Open <code>tests/conftest.py</code>:</p>
+
+    <pre><code class="language-python"># tests/conftest.py: Test configuration and fixtures
+
+import pytest
+from app import create_app
+
+
+@pytest.fixture
+def app():
+    """Create application for testing."""
+    app = create_app('config.TestingConfig')
+    yield app
+
+
+@pytest.fixture
+def client(app):
+    """Create a test client for the app."""
+    return app.test_client()</code></pre>
+
+    <p>Don't worry if the <code>@pytest.fixture</code> decorator looks unfamiliar—we'll dive deep into fixtures in Chapter 3. For now, just know that these fixtures create a Flask application and test client that our tests can use.</p>
+
+    <p>The <code>conftest.py</code> file is special to pytest. Any fixtures you define here are automatically available to all your tests. This approach has the added benefit of keeping your test files clean and focused on what they're actually testing.</p>
+
+    <p>Now let's write our test! Create a new file <code>tests/test_routes.py</code>:</p>
+
+    <pre><code class="language-python"># tests/test_routes.py: Tests for application routes
+
+
+def test_index_route(client):
+    """Test the index route returns correct response."""
+    # Make a GET request to the index route
+    response = client.get('/')
+    
+    # Check that the request was successful
+    assert response.status_code == 200
+    
+    # Get the JSON data from the response
+    data = response.get_json()
+    
+    # Check that the response contains what we expect
+    assert data['message'] == 'Welcome to FlaskBlog Pro!'
+    assert data['status'] == 'success'
+
+
+def test_health_route(client):
+    """Test the health check endpoint."""
+    response = client.get('/health')
+    
+    assert response.status_code == 200
+    
+    data = response.get_json()
+    assert data['status'] == 'healthy'</code></pre>
+
+    <p>Look at how clean and readable these tests are! Each test function:</p>
+    <ol>
+        <li>Has a descriptive name (pytest requires test functions to start with <code>test_</code>)</li>
+        <li>Takes <code>client</code> as a parameter (this is the fixture we defined in <code>conftest.py</code>)</li>
+        <li>Makes a request to a route</li>
+        <li>Uses <code>assert</code> statements to verify the behavior</li>
+    </ol>
+
+    <div class="note">
+        <strong>Understanding assert:</strong> The <code>assert</code> statement is Python's way of saying "this should be true." If the condition after <code>assert</code> is False, the test fails. That's all there is to it! When you see <code>assert response.status_code == 200</code>, you're saying "the status code should be 200." If it's not, pytest will show you what it actually was.
+    </div>
+
+    <h2>Running Your Tests</h2>
+
+    <p>This is the moment of truth. Let's run our tests:</p>
+
+    <pre><code class="language-bash">(venv) $ pytest
+======================== test session starts =========================
+platform darwin -- Python 3.11.0, pytest-7.4.3, pluggy-1.3.0
+rootdir: /path/to/flaskblog
+collected 2 items
+
+tests/test_routes.py ..                                         [100%]
+
+========================= 2 passed in 0.03s ==========================</code></pre>
+
+    <div class="success">
+        <strong>Congratulations!</strong> You just wrote and ran your first Flask tests! Look at that output—2 tests passed in 0.03 seconds. Every time you make a change to your code, you can run this command and know within a fraction of a second whether everything still works.
+    </div>
+
+    <p>Let's make the output even more informative:</p>
+
+    <pre><code class="language-bash">(venv) $ pytest -v
+======================== test session starts =========================
+platform darwin -- Python 3.11.0, pytest-7.4.3, pluggy-1.3.0
+rootdir: /path/to/flaskblog
+collected 2 items
+
+tests/test_routes.py::test_index_route PASSED                   [ 50%]
+tests/test_routes.py::test_health_route PASSED                  [100%]
+
+========================= 2 passed in 0.03s ==========================</code></pre>
+
+    <p>The <code>-v</code> flag (verbose) shows you exactly which tests ran. This is incredibly helpful when you have dozens or hundreds of tests.</p>
+
+    <h2>Understanding What Just Happened</h2>
+
+    <p>Let's take a moment to appreciate what you've accomplished. When you run <code>pytest</code>:</p>
+
+    <ol>
+        <li>pytest automatically discovers all files matching <code>test_*.py</code> or <code>*_test.py</code></li>
+        <li>It finds all functions starting with <code>test_</code></li>
+        <li>For each test function, it runs the fixtures the function needs (in our case, <code>client</code>)</li>
+        <li>The fixtures create a fresh Flask application in testing mode</li>
+        <li>Your test runs against that application</li>
+        <li>pytest reports whether the test passed or failed</li>
+    </ol>
+
+    <p>You might be wondering: why not just use Python's built-in <code>unittest</code> module? You could! But pytest has several advantages:</p>
+
+    <ul>
+        <li><strong>Simpler syntax:</strong> Just use <code>assert</code>, not <code>self.assertEqual()</code></li>
+        <li><strong>Better output:</strong> pytest shows you exactly what went wrong</li>
+        <li><strong>Fixtures:</strong> Much more powerful than unittest's <code>setUp</code>/<code>tearDown</code></li>
+        <li><strong>Plugins:</strong> Huge ecosystem of plugins for additional functionality</li>
+    </ul>
+
+    <h2>Configuration Management for Testing</h2>
+
+    <p>Before we move to the hands-on exercise, I want to show you one more important concept: how to manage configuration for testing.</p>
+
+    <p>In real applications, you often need different settings for development, testing, and production. For example:</p>
+
+    <ul>
+        <li>In development, you might use a local database</li>
+        <li>In testing, you want an in-memory database that's fast and resets between tests</li>
+        <li>In production, you use a real database server</li>
+    </ul>
+
+    <p>Let's expand our <code>config.py</code> to show how this works:</p>
+
+    <pre><code class="language-python"># config.py: Application configuration
+
+class Config:
+    """Base configuration."""
+    SECRET_KEY = 'dev-secret-key'
+    
+
+class DevelopmentConfig(Config):
+    """Configuration for development."""
+    DEBUG = True
+
+
+class TestingConfig(Config):
+    """Configuration for testing."""
+    TESTING = True
+
+
+class ProductionConfig(Config):
+    """Configuration for production."""
+    DEBUG = False
+    # In production, you'd load SECRET_KEY from environment variables
+    # SECRET_KEY = os.environ.get('SECRET_KEY')
+
+
+config = {
+    'development': DevelopmentConfig,
+    'testing': TestingConfig,
+    'production': ProductionConfig,
+    'default': DevelopmentConfig
+}</code></pre>
+
+    <p>Now you have a clear separation of concerns. When we add database testing in Chapter 3, you'll see how powerful this pattern becomes.</p>
+
+    <h2>Troubleshooting</h2>
+
+    <p>Did you have trouble running the tests? Here are some common issues and solutions:</p>
+
+    <h3>pytest command not found</h3>
+
+    <p>If you see <code>pytest: command not found</code>, make sure:</p>
+    <ol>
+        <li>Your virtual environment is activated (you should see <code>(venv)</code> in your prompt)</li>
+        <li>You installed pytest: <code>pip install pytest</code></li>
+    </ol>
+
+    <h3>Import errors</h3>
+
+    <p>If you see <code>ModuleNotFoundError: No module named 'app'</code>, you're probably running pytest from the wrong directory. Make sure you're in the <code>flaskblog</code> directory (the one containing both <code>app</code> and <code>tests</code> folders).</p>
+
+    <h3>No tests collected</h3>
+
+    <p>If pytest says <code>collected 0 items</code>, check that:</p>
+    <ol>
+        <li>Your test file is named <code>test_*.py</code> (e.g., <code>test_routes.py</code>)</li>
+        <li>Your test functions start with <code>test_</code></li>
+        <li>Your test file is in the <code>tests</code> directory</li>
+    </ol>
+
+    <h3>Tests fail with assertion errors</h3>
+
+    <p>If your tests fail, look carefully at pytest's output. It will show you:</p>
+    <ul>
+        <li>Which test failed</li>
+        <li>Which assertion failed</li>
+        <li>What the actual value was vs. what you expected</li>
+    </ul>
+
+    <p>For example, if you see:</p>
+    <pre><code class="language-bash">AssertionError: assert 404 == 200</code></pre>
+
+    <p>This means your test expected a 200 status code but got 404. Check that your route is correctly defined and that you're requesting the right URL.</p>
+
+    <h2>Hands-On Exercise</h2>
+
+    <p>Now it's your turn! I want you to practice what you've learned by creating a new route and testing it.</p>
+
+    <h3>Exercise: Add an About Page</h3>
+
+    <p><strong>Goal:</strong> Create a <code>/about</code> route that returns information about the blog, and write tests for it.</p>
+
+    <p><strong>Requirements:</strong></p>
+    <ol>
+        <li>Add a new route <code>/about</code> in <code>app/routes.py</code></li>
+        <li>The route should return JSON with:
+            <ul>
+                <li>A <code>name</code> field: "FlaskBlog Pro"</li>
+                <li>A <code>version</code> field: "1.0.0"</li>
+                <li>A <code>description</code> field: "A fully-tested blog platform"</li>
+            </ul>
+        </li>
+        <li>Write a test in <code>tests/test_routes.py</code> that verifies:
+            <ul>
+                <li>The route returns a 200 status code</li>
+                <li>All three fields are present and correct</li>
+            </ul>
+        </li>
+    </ol>
+
+    <p><strong>Hints:</strong></p>
+    <ul>
+        <li>Follow the same pattern as the <code>/</code> and <code>/health</code> routes</li>
+        <li>Use <code>jsonify()</code> to return JSON</li>
+        <li>Your test function should be named <code>test_about_route</code></li>
+        <li>Remember to assert each field individually</li>
+    </ul>
+
+    <p><strong>Self-Check:</strong> When you're done, run <code>pytest -v</code>. You should see 3 passing tests (the two we wrote together plus your new one).</p>
+
+    <h3>Solution</h3>
+
+    <p>Try to complete the exercise on your own first! When you're ready, here's one possible solution:</p>
+
+    <details>
+        <summary><strong>Click to reveal solution</strong></summary>
+
+        <p>In <code>app/routes.py</code>, add this route:</p>
+
+        <pre><code class="language-python">@bp.route('/about')
+def about():
+    """About page route."""
+    return jsonify({
+        'name': 'FlaskBlog Pro',
+        'version': '1.0.0',
+        'description': 'A fully-tested blog platform'
+    })</code></pre>
+
+        <p>In <code>tests/test_routes.py</code>, add this test:</p>
+
+        <pre><code class="language-python">def test_about_route(client):
+    """Test the about page returns correct information."""
+    response = client.get('/about')
+    
+    assert response.status_code == 200
+    
+    data = response.get_json()
+    assert data['name'] == 'FlaskBlog Pro'
+    assert data['version'] == '1.0.0'
+    assert data['description'] == 'A fully-tested blog platform'</code></pre>
+
+        <p>Run the tests:</p>
+        <pre><code class="language-bash">(venv) $ pytest -v
+======================== test session starts =========================
+collected 3 items
+
+tests/test_routes.py::test_index_route PASSED                   [ 33%]
+tests/test_routes.py::test_health_route PASSED                  [ 66%]
+tests/test_routes.py::test_about_route PASSED                   [100%]
+
+========================= 3 passed in 0.04s ==========================</code></pre>
+
+        <p>If you see 3 passing tests, you can congratulate yourself! You've successfully created and tested a new route.</p>
+    </details>
+
+    <h2>What We've Learned</h2>
+
+    <p>Take a moment to appreciate everything you've accomplished in this chapter:</p>
+
+    <ul>
+        <li>✓ You understand the testing pyramid and why it matters</li>
+        <li>✓ You can set up a Flask project structure optimized for testing</li>
+        <li>✓ You know how to configure pytest for Flask</li>
+        <li>✓ You can create a Flask application using the application factory pattern</li>
+        <li>✓ You've written your first automated tests</li>
+        <li>✓ You know how to run tests and interpret the results</li>
+        <li>✓ You can manage different configurations for testing</li>
+    </ul>
+
+    <p>This is an excellent foundation! In the next chapter, we're going to build on what you've learned by diving deeper into testing Flask routes. You'll learn how to test POST requests, how to handle errors, and how to use parametrized tests to test multiple scenarios efficiently.</p>
+
+    <h2>Before You Continue...</h2>
+
+    <p>Before moving on to Chapter 2, make sure you:</p>
+
+    <ol>
+        <li>Have all three tests passing (<code>pytest -v</code> should show 3 passed)</li>
+        <li>Understand the purpose of <code>conftest.py</code> and fixtures</li>
+        <li>Can explain what the application factory pattern is</li>
+        <li>Know the difference between unit, integration, and end-to-end tests</li>
+    </ol>
+
+    <p>If something doesn't make complete sense yet, that's okay! As we continue building FlaskBlog Pro throughout this course, these concepts will become clearer. You will see these patterns repeated and reinforced in every chapter.</p>
+
+    <div class="success">
+        <strong>Next Up:</strong> In Chapter 2, we're going to expand FlaskBlog Pro by adding more routes that handle different HTTP methods (POST, PUT, DELETE). You'll learn how to test each of these methods, how to mock external dependencies, and how to use parametrized tests to reduce code duplication. We'll continue using the same application, so don't delete your code!
+    </div>
+
+    <div class="nav-links">
+        <a href="index.html">← Index</a>
+        <a href="chapter02.html">Next Chapter →</a>
+    </div>
+
+    <footer>
+        <p>Flask Testing Mastery - A comprehensive course on testing Flask applications</p>
+        <p style="font-size: 0.9em;">Questions or feedback? Let me know!</p>
+    </footer>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.js"></script>
+</body>
+
+</html>

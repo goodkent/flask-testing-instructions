@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 3: Testing Database Models and SQLAlchemy - Flask Testing Mastery</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/prism.css">
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="chapter02.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter04.html">Next Chapter →</a>
+        </div>
+
+        <h1>Chapter 3: Testing Database Models and SQLAlchemy</h1>
+        <p class="chapter-subtitle">Learn to test your data layer effectively</p>
+
+        <div class="github-links">
+            <span class="github-label">Chapter Code:</span>
+            <a href="https://github.com/goodkent/flask-testing/tree/ch03-end" class="github-link">Browse</a>
+            <a href="https://github.com/goodkent/flask-testing/archive/refs/tags/ch03-end.zip" class="github-link">Zip</a>
+            <a href="https://github.com/goodkent/flask-testing/compare/ch02-end...ch03-end" class="github-link">Diff</a>
+        </div>
+
+        <div class="intro-section">
+            <p>Welcome back! In the previous chapter, you built a complete REST API for managing blog posts, and you wrote comprehensive tests for all the HTTP methods. But there's something I need to tell you about the way we implemented it: storing blog posts in a Python dictionary was a temporary solution. It worked great for learning how to test routes, but real applications need databases.</p>
+
+            <p>Think about what happens when you restart your Flask application right now. All the blog posts disappear! That's because the <code>blog_posts</code> dictionary only exists in memory. As soon as the process stops, everything is gone. Obviously, this won't work for a real blog.</p>
+
+            <p>In this chapter, you're going to replace that in-memory dictionary with a real database using SQLAlchemy. And here's the important part: you'll keep all the routes and tests you already wrote! We're just going to swap out the storage mechanism underneath. This is a great example of how having tests gives you confidence when refactoring code.</p>
+
+            <p>If you've tried testing code that uses a database before, you might have run into some questions:</p>
+            
+            <ul>
+                <li>Should I use my development database for testing? (Spoiler: No!)</li>
+                <li>What if my tests modify data in the database?</li>
+                <li>How do I reset the database to a clean state between tests?</li>
+                <li>How do I create test data without writing tons of boilerplate?</li>
+            </ul>
+
+            <p>By the end of this chapter, you'll have answers to all of these questions. You're going to learn how to set up test databases, create database fixtures, test model relationships, and keep your tests fast and isolated.</p>
+        </div>
+
+        <h2>Learning Objectives</h2>
+        <ul>
+            <li>Set up test databases using in-memory SQLite</li>
+            <li>Add SQLAlchemy to an existing Flask application</li>
+            <li>Create database models to replace in-memory storage</li>
+            <li>Create database fixtures for automated setup and teardown</li>
+            <li>Update existing routes to use database queries</li>
+            <li>Update tests to work with the database</li>
+            <li>Test model methods and properties</li>
+        </ul>
+
+        <h2>Why We Need a Test Database</h2>
+
+        <p>Before we start adding a database to our application, let's talk about why we need a separate database for testing.</p>
+
+        <p>Imagine you're testing a function that deletes a blog post from the database. If you run that test against your development database, you'll actually delete a real post! Or suppose you're testing post creation, and your test creates 50 new posts to verify everything works correctly. Your development database would quickly fill up with test data.</p>
+
+        <p>The solution is simple: we create a completely separate database just for testing. This test database:</p>
+
+        <ul>
+            <li>Starts fresh before each test run</li>
+            <li>Can be modified however the tests need without affecting your development data</li>
+            <li>Is completely independent from your development and production databases</li>
+            <li>Is automatically cleaned up after tests run</li>
+        </ul>
+
+        <p>The easiest approach for testing is to use an in-memory SQLite database. SQLite is a database that lives entirely in RAM, so it's incredibly fast and doesn't leave any files behind when you're done. This makes it perfect for testing!</p>
+
+        <div class="note">
+            <p><strong>Important:</strong> Some developers argue that you should test against the same database type you use in production (e.g., if you use PostgreSQL in production, test with PostgreSQL). This is a valid point for integration tests, which we'll cover in Chapter 7. For unit tests of your models and routes, though, SQLite works great and is much faster.</p>
+        </div>
+
+        <h2>Installing Flask-SQLAlchemy</h2>
+
+        <p>First, let's install Flask-SQLAlchemy. Make sure your virtual environment is activated, then run:</p>
+
+        <pre><code class="language-bash">(venv) $ pip install flask-sqlalchemy</code></pre>
+
+        <p>You should see output showing that Flask-SQLAlchemy and its dependencies are being installed. When it's done, update your requirements file:</p>
+
+        <pre><code class="language-bash">(venv) $ pip freeze > requirements.txt</code></pre>
+
+        <h2>Updating Configuration for Databases</h2>
+
+        <p>Remember the <code>config.py</code> file we created in Chapter 1? We need to update it to include database configuration. Open <code>config.py</code> and update it to look like this:</p>
+
+        <pre><code class="language-python"># config.py: Application configuration
+
+import os
+from pathlib import Path
+
+# Determine the base directory of the application
+basedir = Path(__file__).parent.absolute()
+
+
+class Config:
+    """Base configuration."""
+    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key'
+    
+    # SQLAlchemy configuration
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+
+class DevelopmentConfig(Config):
+    """Configuration for development."""
+    DEBUG = True
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DEV_DATABASE_URL') or \
+        'sqlite:///' + str(basedir / 'flaskblog-dev.db')
+
+
+class TestingConfig(Config):
+    """Configuration for testing."""
+    TESTING = True
+    # Use in-memory SQLite database for fast testing
+    SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+
+
+class ProductionConfig(Config):
+    """Configuration for production."""
+    DEBUG = False
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
+        'sqlite:///' + str(basedir / 'flaskblog.db')
+
+
+config = {
+    'development': DevelopmentConfig,
+    'testing': TestingConfig,
+    'production': ProductionConfig,
+    'default': DevelopmentConfig
+}</code></pre>
+
+        <p>Let me explain the key changes:</p>
+
+        <ul>
+            <li><code>SQLALCHEMY_TRACK_MODIFICATIONS = False</code> - This disables Flask-SQLAlchemy's modification tracking feature, which we don't need and which uses extra memory</li>
+            <li><code>DevelopmentConfig</code> uses a file-based SQLite database (<code>flaskblog-dev.db</code>) so your development data persists between runs</li>
+            <li><code>TestingConfig</code> uses an in-memory database (<code>sqlite:///:memory:</code>) - this is the key! The database exists only in RAM and disappears when tests finish</li>
+            <li>We use <code>pathlib.Path</code> to build database paths that work on all operating systems</li>
+        </ul>
+
+        <p>The in-memory database means your tests will be fast and won't create any database files on disk. When your test suite finishes, the database disappears completely!</p>
+
+        <h2>Adding SQLAlchemy to the Application</h2>
+
+        <p>Now we need to update our application to use SQLAlchemy. Open <code>app/__init__.py</code> and update it:</p>
+
+        <pre><code class="language-python"># app/__init__.py: Application factory
+
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+
+# Create the database instance (but don't initialize it yet)
+db = SQLAlchemy()
+
+
+def create_app(config_class='config.DevelopmentConfig'):
+    """Create and configure the Flask application."""
+    app = Flask(__name__)
+    app.config.from_object(config_class)
+    
+    # Initialize extensions with the app
+    db.init_app(app)
+    
+    # Register routes
+    from app import routes
+    app.register_blueprint(routes.bp)
+    
+    return app</code></pre>
+
+        <p>Notice what we've added:</p>
+
+        <ol>
+            <li>We import <code>SQLAlchemy</code> from <code>flask_sqlalchemy</code></li>
+            <li>We create a <code>db</code> object but don't initialize it with an app yet - this is important for the application factory pattern!</li>
+            <li>Inside <code>create_app</code>, we call <code>db.init_app(app)</code> to connect the database to our Flask application</li>
+        </ol>
+
+        <p>This pattern allows us to create different app instances with different database configurations—exactly what we need for testing!</p>
+
+        <h2>Creating the Post Model</h2>
+
+        <p>Now let's create a database model to replace our <code>blog_posts</code> dictionary. Create a new file <code>app/models.py</code>:</p>
+
+        <pre><code class="language-python"># app/models.py: Database models
+
+from datetime import datetime
+from app import db
+
+
+class Post(db.Model):
+    """Blog post model."""
+    __tablename__ = 'posts'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<Post {self.id}: {self.title}>'
+    
+    def to_dict(self):
+        """Convert post to dictionary for JSON responses."""
+        return {
+            'id': self.id,
+            'title': self.title,
+            'content': self.content
+        }</code></pre>
+
+        <p>This model is designed to match the structure we had with our dictionary-based posts:</p>
+
+        <ul>
+            <li><code>id</code> - Auto-incrementing primary key (replaces our <code>next_id</code> counter)</li>
+            <li><code>title</code> - String field up to 200 characters</li>
+            <li><code>content</code> - Text field for the post content</li>
+            <li><code>created_at</code> - Timestamp that defaults to the current time</li>
+            <li><code>__repr__</code> - Helpful representation for debugging</li>
+            <li><code>to_dict()</code> - Method to convert the model to a dictionary for JSON responses</li>
+        </ul>
+
+        <p>The <code>to_dict()</code> method is important! It lets us easily convert our database models to JSON, just like we did with the dictionary-based posts in Chapter 2.</p>
+
+        <h2>Updating Routes to Use the Database</h2>
+
+        <p>Now comes the exciting part: we're going to update our routes to use the database instead of the dictionary. Open <code>app/routes.py</code> and replace it with this updated version:</p>
+
+        <pre><code class="language-python"># app/routes.py: Application routes
+
+from flask import Blueprint, jsonify, request
+from app import db
+from app.models import Post
+
+bp = Blueprint('main', __name__)
+
+
+@bp.route('/')
+def index():
+    """Home page route."""
+    return jsonify({
+        'message': 'Welcome to FlaskBlog Pro!',
+        'status': 'success'
+    })
+
+
+@bp.route('/health')
+def health():
+    """Health check endpoint."""
+    return jsonify({'status': 'healthy'}), 200
+
+
+@bp.route('/about')
+def about():
+    """About page route."""
+    return jsonify({
+        'name': 'FlaskBlog Pro',
+        'version': '1.0.0',
+        'description': 'A fully-tested blog platform'
+    })
+
+
+@bp.route('/api/posts', methods=['GET'])
+def get_posts():
+    """Get all blog posts."""
+    posts = Post.query.all()
+    return jsonify([post.to_dict() for post in posts])
+
+
+@bp.route('/api/posts/<int:post_id>', methods=['GET'])
+def get_post(post_id):
+    """Get a single blog post by ID."""
+    post = Post.query.get(post_id)
+    if post is None:
+        return jsonify({'error': 'Post not found'}), 404
+    return jsonify(post.to_dict())
+
+
+@bp.route('/api/posts', methods=['POST'])
+def create_post():
+    """Create a new blog post."""
+    data = request.get_json()
+    if not data or 'title' not in data or 'content' not in data:
+        return jsonify({'error': 'Title and content are required'}), 400
+    
+    post = Post(title=data['title'], content=data['content'])
+    db.session.add(post)
+    db.session.commit()
+    
+    return jsonify(post.to_dict()), 201
+
+
+@bp.route('/api/posts/<int:post_id>', methods=['PUT'])
+def update_post(post_id):
+    """Update an existing blog post."""
+    post = Post.query.get(post_id)
+    if post is None:
+        return jsonify({'error': 'Post not found'}), 404
+    
+    data = request.get_json()
+    if 'title' in data:
+        post.title = data['title']
+    if 'content' in data:
+        post.content = data['content']
+    
+    db.session.commit()
+    return jsonify(post.to_dict())
+
+
+@bp.route('/api/posts/<int:post_id>', methods=['DELETE'])
+def delete_post(post_id):
+    """Delete a blog post."""
+    post = Post.query.get(post_id)
+    if post is None:
+        return jsonify({'error': 'Post not found'}), 404
+    
+    db.session.delete(post)
+    db.session.commit()
+    return '', 204</code></pre>
+
+        <p>Look at what we changed! We kept all the same routes and endpoints, but replaced the dictionary operations with database operations:</p>
+
+        <table>
+            <tr>
+                <th>Chapter 2 (Dictionary)</th>
+                <th>Chapter 3 (Database)</th>
+            </tr>
+            <tr>
+                <td><code>list(blog_posts.values())</code></td>
+                <td><code>Post.query.all()</code></td>
+            </tr>
+            <tr>
+                <td><code>blog_posts.get(post_id)</code></td>
+                <td><code>Post.query.get(post_id)</code></td>
+            </tr>
+            <tr>
+                <td><code>blog_posts[next_id] = post</code></td>
+                <td><code>db.session.add(post)</code></td>
+            </tr>
+            <tr>
+                <td><code>del blog_posts[post_id]</code></td>
+                <td><code>db.session.delete(post)</code></td>
+            </tr>
+        </table>
+
+        <p>Notice a few important things:</p>
+
+        <ul>
+            <li>We removed the <code>blog_posts = {}</code> dictionary and <code>next_id</code> counter—we don't need them anymore!</li>
+            <li>After making changes to the database, we call <code>db.session.commit()</code> to save them</li>
+            <li>We use <code>Post(...)</code> to create new model instances instead of manually creating dictionaries</li>
+            <li>The API's behavior is exactly the same from the client's perspective!</li>
+        </ul>
+
+        <h2>Setting Up Database Testing Fixtures</h2>
+
+        <p>Now we need to update our test configuration to work with the database. This is where fixtures become really powerful. We're going to create fixtures that automatically set up and tear down the database for each test.</p>
+
+        <p>Open <code>tests/conftest.py</code> and update it:</p>
+
+        <pre><code class="language-python"># tests/conftest.py: Test configuration and fixtures
+
+import pytest
+from app import create_app, db as _db
+from config import TestingConfig
+
+
+@pytest.fixture(scope='session')
+def app():
+    """Create application for testing."""
+    app = create_app('config.TestingConfig')
+    
+    # Create application context
+    with app.app_context():
+        _db.create_all()
+        yield app
+        _db.drop_all()
+
+
+@pytest.fixture(scope='function')
+def db_session(app):
+    """Create a database session for a test."""
+    connection = _db.engine.connect()
+    transaction = connection.begin()
+    
+    # Create a session bound to the connection
+    session = _db.create_scoped_session(
+        options={'bind': connection, 'binds': {}}
+    )
+    _db.session = session
+    
+    yield session
+    
+    # Rollback the transaction and close connection
+    session.close()
+    transaction.rollback()
+    connection.close()
+
+
+@pytest.fixture(scope='function')
+def client(app, db_session):
+    """Create a test client for the app."""
+    return app.test_client()</code></pre>
+
+        <p>This might look complex, so let me explain what each fixture does:</p>
+
+        <p><strong>app fixture (scope='session'):</strong></p>
+        <ul>
+            <li>Creates the Flask app once for the entire test session</li>
+            <li>Creates all database tables with <code>_db.create_all()</code></li>
+            <li>After all tests finish, drops all tables with <code>_db.drop_all()</code></li>
+        </ul>
+
+        <p><strong>db_session fixture (scope='function'):</strong></p>
+        <ul>
+            <li>Creates a new database session for each test function</li>
+            <li>Uses a transaction that automatically rolls back after each test</li>
+            <li>This ensures each test starts with a clean database!</li>
+        </ul>
+
+        <p><strong>client fixture (scope='function'):</strong></p>
+        <ul>
+            <li>Creates a test client that uses the clean database session</li>
+            <li>This is what your tests use to make HTTP requests</li>
+        </ul>
+
+        <p>The magic here is in the <code>db_session</code> fixture. It uses transactions to isolate each test. After each test runs, the transaction is rolled back, which undoes all database changes. This means each test starts with an empty database!</p>
+
+        <div class="note">
+            <p><strong>Understanding Test Isolation:</strong> One aspect that may seem confusing at first is why we need all this complexity for test isolation. Can't we just delete all the data after each test? We could, but transactions are much faster! Rolling back a transaction is nearly instantaneous, while deleting and recreating data takes time. As your test suite grows, this difference matters a lot.</p>
+        </div>
+
+        <h2>Updating Tests to Work with the Database</h2>
+
+        <p>The great news is that most of our tests from Chapter 2 will still work! But we need to make a small update to <code>conftest.py</code>. The database needs to be properly set up before tests run.</p>
+
+        <p>Let's run our existing tests to see if they still pass:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest -v</code></pre>
+
+        <p>You should see all your tests passing! If you don't, don't worry—we'll troubleshoot in the next section.</p>
+
+        <h2>Testing Model Methods</h2>
+
+        <p>Now that we have a database model, we can test model-specific functionality. Create a new test file <code>tests/test_models.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_models.py: Tests for database models
+
+from app.models import Post
+from app import db
+
+
+def test_create_post(db_session):
+    """Test creating a post model."""
+    post = Post(title='Test Post', content='Test content')
+    db.session.add(post)
+    db.session.commit()
+    
+    assert post.id is not None
+    assert post.title == 'Test Post'
+    assert post.content == 'Test content'
+    assert post.created_at is not None
+
+
+def test_post_repr(db_session):
+    """Test the post __repr__ method."""
+    post = Post(title='Test Post', content='Test content')
+    db.session.add(post)
+    db.session.commit()
+    
+    assert repr(post) == f'<Post {post.id}: Test Post>'
+
+
+def test_post_to_dict(db_session):
+    """Test converting a post to a dictionary."""
+    post = Post(title='Test Post', content='Test content')
+    db.session.add(post)
+    db.session.commit()
+    
+    post_dict = post.to_dict()
+    
+    assert post_dict['id'] == post.id
+    assert post_dict['title'] == 'Test Post'
+    assert post_dict['content'] == 'Test content'
+    assert 'id' in post_dict
+    assert 'title' in post_dict
+    assert 'content' in post_dict
+
+
+def test_query_posts(db_session):
+    """Test querying multiple posts."""
+    post1 = Post(title='First Post', content='First content')
+    post2 = Post(title='Second Post', content='Second content')
+    
+    db.session.add(post1)
+    db.session.add(post2)
+    db.session.commit()
+    
+    posts = Post.query.all()
+    assert len(posts) == 2
+    
+    first = Post.query.filter_by(title='First Post').first()
+    assert first.content == 'First content'
+
+
+def test_update_post(db_session):
+    """Test updating a post."""
+    post = Post(title='Original', content='Original content')
+    db.session.add(post)
+    db.session.commit()
+    
+    post.title = 'Updated'
+    db.session.commit()
+    
+    updated = Post.query.get(post.id)
+    assert updated.title == 'Updated'
+    assert updated.content == 'Original content'
+
+
+def test_delete_post(db_session):
+    """Test deleting a post."""
+    post = Post(title='To Delete', content='Will be deleted')
+    db.session.add(post)
+    db.session.commit()
+    
+    post_id = post.id
+    db.session.delete(post)
+    db.session.commit()
+    
+    deleted = Post.query.get(post_id)
+    assert deleted is None</code></pre>
+
+        <p>These tests verify that our Post model works correctly at the database level. We're testing:</p>
+
+        <ul>
+            <li>Creating posts and ensuring they get auto-incremented IDs</li>
+            <li>The <code>__repr__</code> method returns the correct string</li>
+            <li>The <code>to_dict()</code> method creates proper dictionaries</li>
+            <li>Querying for posts works correctly</li>
+            <li>Updating posts persists the changes</li>
+            <li>Deleting posts removes them from the database</li>
+        </ul>
+
+        <p>Run your tests again:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest -v</code></pre>
+
+        <p>You should now see even more passing tests! You're testing both the API layer (routes) and the data layer (models).</p>
+
+        <h2>Understanding What Just Happened</h2>
+
+        <p>Let's take a moment to appreciate what you've accomplished. You took an application that stored data in memory and converted it to use a real database, and all your existing tests still pass! This is the power of testing—you can refactor with confidence.</p>
+
+        <p>Here's what happens when you run your tests now:</p>
+
+        <ol>
+            <li>pytest starts and loads your test configuration</li>
+            <li>The <code>app</code> fixture creates a Flask app with the test configuration (in-memory database)</li>
+            <li>Database tables are created in memory</li>
+            <li>For each test function, a new database session is created</li>
+            <li>The test runs and makes changes to the database</li>
+            <li>After the test, the transaction is rolled back (changes are undone)</li>
+            <li>The next test starts with a clean database</li>
+            <li>When all tests finish, the database tables are dropped and memory is freed</li>
+        </ol>
+
+        <p>This all happens incredibly fast because the database is in memory and we're using transactions for isolation!</p>
+
+        <h2>Troubleshooting</h2>
+
+        <h3>Problem: Import Errors</h3>
+        <p><strong>Symptom:</strong> <code>ImportError: cannot import name 'db' from 'app'</code></p>
+        <p><strong>Solution:</strong> Make sure you've updated <code>app/__init__.py</code> to create and export the <code>db</code> object. The line <code>db = SQLAlchemy()</code> should be at the module level, not inside a function.</p>
+
+        <h3>Problem: "Table already exists" Errors</h3>
+        <p><strong>Symptom:</strong> <code>OperationalError: table posts already exists</code></p>
+        <p><strong>Solution:</strong> This usually means the database isn't being properly cleaned up between tests. Make sure your <code>db_session</code> fixture is using <code>scope='function'</code>, not <code>scope='session'</code>.</p>
+
+        <h3>Problem: Tests Pass But Data Persists</h3>
+        <p><strong>Symptom:</strong> Creating a post in one test makes it appear in another test</p>
+        <p><strong>Solution:</strong> The transaction isn't being properly rolled back. Check that your <code>db_session</code> fixture calls <code>transaction.rollback()</code> after the <code>yield</code> statement.</p>
+
+        <h3>Problem: Development Database Has Test Data</h3>
+        <p><strong>Symptom:</strong> You see test data in your development database file</p>
+        <p><strong>Solution:</strong> Make sure you're passing <code>'config.TestingConfig'</code> to <code>create_app()</code> in your test fixtures. If you use the wrong config, tests will run against your development database!</p>
+
+        <h2>Hands-On Exercise: Add a Published Field</h2>
+
+        <p>Remember the exercise from Chapter 2 where I asked you to add a published status? Now let's implement it properly with the database!</p>
+
+        <h3>The Challenge</h3>
+
+        <p>Add a <code>published</code> field to the Post model and update the routes accordingly:</p>
+
+        <ol>
+            <li>Add a <code>published</code> boolean column to the Post model (default: False)</li>
+            <li>Update the <code>to_dict()</code> method to include the published status</li>
+            <li>Modify <code>create_post()</code> to accept an optional <code>published</code> field</li>
+            <li>Add a route <code>GET /api/posts/published</code> that returns only published posts</li>
+            <li>Add a route <code>POST /api/posts/&lt;post_id&gt;/publish</code> that publishes a post</li>
+        </ol>
+
+        <h3>Hints</h3>
+
+        <ul>
+            <li>In the model: <code>published = db.Column(db.Boolean, default=False)</code></li>
+            <li>For querying published posts: <code>Post.query.filter_by(published=True).all()</code></li>
+            <li>Write tests for each new feature before implementing it (TDD practice!)</li>
+        </ul>
+
+        <h3>Success Criteria</h3>
+
+        <p>When you're done, you should have tests that verify:</p>
+
+        <ul>
+            <li>New posts default to <code>published=False</code></li>
+            <li>You can create posts with <code>published=True</code></li>
+            <li>The published posts endpoint only returns published posts</li>
+            <li>The publish endpoint changes a post's status</li>
+            <li>Publishing a non-existent post returns a 404</li>
+        </ul>
+
+        <p>Try the exercise! If you get stuck, review the patterns we've used in this chapter. All the pieces are there.</p>
+
+        <h2>What We've Learned</h2>
+
+        <p>Take a moment to appreciate everything you've accomplished in this chapter:</p>
+
+        <ul>
+            <li>✓ You can set up test databases using in-memory SQLite</li>
+            <li>✓ You understand how to add SQLAlchemy to an existing Flask application</li>
+            <li>✓ You can create database models that replace in-memory storage</li>
+            <li>✓ You know how to create database fixtures that automatically set up and tear down test data</li>
+            <li>✓ You've successfully updated existing routes to use database queries</li>
+            <li>✓ You understand transaction-based test isolation and why it's fast</li>
+            <li>✓ You can test both model methods and API endpoints with databases</li>
+        </ul>
+
+        <p>Most importantly, you've seen how having tests gives you confidence when refactoring. You completely changed how your application stores data, and your tests verified that everything still works!</p>
+
+        <h2>Before You Continue...</h2>
+
+        <p>Before moving on to Chapter 4, make sure you:</p>
+
+        <ol>
+            <li>Have all tests passing with the database-backed implementation</li>
+            <li>Understand why we use an in-memory database for testing</li>
+            <li>Can explain what the <code>db_session</code> fixture does</li>
+            <li>Know how transactions provide test isolation</li>
+            <li>Have attempted the hands-on exercise (or at least thought through how you'd approach it)</li>
+        </ol>
+
+        <p>If something doesn't make complete sense yet, that's okay! Database testing has some complexity to it, but these patterns will become second nature as you use them. In future chapters, you'll build on this foundation to test more complex scenarios.</p>
+
+        <div class="success">
+            <strong>Next Up:</strong> In Chapter 4, you're going to add user registration and login functionality to FlaskBlog Pro. You'll learn how to test WTForms validation, handle CSRF tokens in tests, test file uploads, and build a complete authentication system with comprehensive tests. Forms are where users interact with your application, so testing them thoroughly is crucial!
+        </div>
+
+        <div class="nav-links">
+            <a href="chapter02.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter04.html">Next Chapter →</a>
+        </div>
+
+        <footer>
+            <p>Flask Testing Mastery - A comprehensive course on testing Flask applications</p>
+            <p style="font-size: 0.9em;">Questions or feedback? Let me know!</p>
+        </footer>
+    </div>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</body>
+</html>
