@@ -56,6 +56,4 @@ coverage.xml
 .DS_Store
 
 # Project Specific Files
-.zip
-planning/
-.md
+instructions/
