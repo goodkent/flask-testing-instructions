@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Appendix B: Sample Test Suite Structure - Flask Testing Mastery</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/prism.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Appendix B: Sample Test Suite Structure</h1>
+        
+        <div class="chapter-links">
+            <p><a href="https://github.com/goodkent/flask-testing" target="_blank">Browse</a> | 
+               <a href="https://github.com/goodkent/flask-testing/archive/refs/tags/appendix-b.zip" target="_blank">Download ZIP</a></p>
+        </div>
+
+        <div class="intro">
+            <p>Welcome to the Test Suite Structure reference! Throughout this course, you've been building tests for FlaskBlog Pro, and you've learned that good test organization is just as important as writing good tests. But when you're starting a new project, you might wonder: how should I actually organize all these test files?</p>
+            
+            <p>This appendix provides you with real-world examples of test suite organization. I'll show you the complete directory structure for FlaskBlog Pro, give you annotated <code>conftest.py</code> examples, and share reusable fixtures you can adapt to your own projects.</p>
+            
+            <p>Think of this as your reference guide—something you can come back to whenever you're setting up a new Flask project or refactoring an existing test suite.</p>
+        </div>
+
+        <h2>Complete Project Layout</h2>
+
+        <p>Let's start with the bird's-eye view. Here's the complete directory structure for FlaskBlog Pro, including all test files:</p>
+
+        <pre><code class="language-text">flaskblog-pro/
+├── app/
+│   ├── __init__.py              # Application factory
+│   ├── models.py                # Database models (User, Post, Comment)
+│   ├── forms.py                 # WTForms (LoginForm, PostForm, etc.)
+│   ├── auth/
+│   │   ├── __init__.py
+│   │   ├── routes.py            # Authentication routes
+│   │   └── forms.py             # Auth-specific forms
+│   ├── posts/
+│   │   ├── __init__.py
+│   │   ├── routes.py            # Post routes
+│   │   └── forms.py             # Post forms
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── auth.py              # API authentication
+│   │   ├── posts.py             # Posts API endpoints
+│   │   └── users.py             # Users API endpoints
+│   ├── static/
+│   │   ├── css/
+│   │   ├── js/
+│   │   └── uploads/
+│   └── templates/
+│       ├── base.html
+│       ├── auth/
+│       ├── posts/
+│       └── errors/
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py              # Main fixtures for all tests
+│   │
+│   ├── unit/                    # Unit tests
+│   │   ├── __init__.py
+│   │   ├── conftest.py          # Fixtures specific to unit tests
+│   │   ├── test_models.py       # Model unit tests
+│   │   ├── test_forms.py        # Form validation tests
+│   │   └── test_utils.py        # Utility function tests
+│   │
+│   ├── integration/             # Integration tests
+│   │   ├── __init__.py
+│   │   ├── conftest.py          # Integration-specific fixtures
+│   │   ├── test_auth.py         # Authentication workflow tests
+│   │   ├── test_posts.py        # Post creation/editing tests
+│   │   ├── test_comments.py     # Comment workflow tests
+│   │   └── test_api.py          # API integration tests
+│   │
+│   ├── e2e/                     # End-to-end tests
+│   │   ├── __init__.py
+│   │   ├── conftest.py          # E2E fixtures (Selenium setup)
+│   │   ├── test_user_journey.py # Complete user workflows
+│   │   ├── test_admin.py        # Admin dashboard E2E
+│   │   └── pages/               # Page Object Models
+│   │       ├── __init__.py
+│   │       ├── base_page.py
+│   │       ├── login_page.py
+│   │       └── post_page.py
+│   │
+│   ├── performance/             # Performance tests
+│   │   ├── __init__.py
+│   │   └── locustfile.py        # Locust load tests
+│   │
+│   └── fixtures/                # Shared test fixtures/factories
+│       ├── __init__.py
+│       ├── factories.py         # factory_boy factories
+│       └── data.py              # Static test data
+│
+├── migrations/                  # Database migrations
+├── instance/                    # Instance folder (not in git)
+│   └── config.py
+├── config.py                    # Configuration classes
+├── requirements.txt             # Production dependencies
+├── requirements-dev.txt         # Development/testing dependencies
+├── pytest.ini                   # pytest configuration
+├── .env.example                 # Example environment variables
+├── .gitignore
+└── run.py                       # Application entry point</code></pre>
+
+        <div class="info">
+            <strong>Note:</strong> This structure supports all testing levels. Smaller projects might only need <code>tests/test_routes.py</code> and <code>tests/conftest.py</code>. Start simple and expand as needed!
+        </div>
+
+        <h2>Understanding the Structure</h2>
+
+        <p>Let me explain the reasoning behind this organization:</p>
+
+        <h3>Why Separate Directories by Test Type?</h3>
+
+        <p>Organizing tests by type (<code>unit/</code>, <code>integration/</code>, <code>e2e/</code>) provides several benefits:</p>
+
+        <ul>
+            <li><strong>Run specific test types:</strong> <code>pytest tests/unit</code> runs only fast unit tests</li>
+            <li><strong>Different fixtures:</strong> Unit tests need different setup than E2E tests</li>
+            <li><strong>Clear test boundaries:</strong> Forces you to think about what type of test you're writing</li>
+            <li><strong>Selective CI runs:</strong> Run fast tests on every commit, slow tests nightly</li>
+        </ul>
+
+        <h3>Why Multiple conftest.py Files?</h3>
+
+        <p>pytest loads <code>conftest.py</code> files hierarchically. You can have:</p>
+
+        <ul>
+            <li><code>tests/conftest.py</code> - Fixtures available to ALL tests</li>
+            <li><code>tests/unit/conftest.py</code> - Fixtures only for unit tests</li>
+            <li><code>tests/integration/conftest.py</code> - Fixtures only for integration tests</li>
+            <li><code>tests/e2e/conftest.py</code> - Fixtures only for E2E tests (like Selenium setup)</li>
+        </ul>
+
+        <p>This prevents namespace pollution and keeps fixtures close to where they're used.</p>
+
+        <h3>Why a Separate fixtures/ Directory?</h3>
+
+        <p>The <code>tests/fixtures/</code> directory holds reusable test data:</p>
+
+        <ul>
+            <li><strong>factories.py:</strong> factory_boy factories for creating model instances</li>
+            <li><strong>data.py:</strong> Static test data (JSON responses, sample files, etc.)</li>
+        </ul>
+
+        <p>This keeps your test files clean and makes test data easy to find and update.</p>
+
+        <h2>Real-World conftest.py Examples</h2>
+
+        <p>Let's look at the actual <code>conftest.py</code> files from FlaskBlog Pro.</p>
+
+        <h3>Root conftest.py (tests/conftest.py)</h3>
+
+        <p>This file contains fixtures that <em>all</em> tests need:</p>
+
+        <pre><code class="language-python"># tests/conftest.py
+"""
+Root conftest.py - Fixtures available to all tests.
+
+This file provides the core fixtures needed across all test types:
+- Application factory fixtures (app, client)
+- Database fixtures (db)
+- Authentication helpers
+"""
+
+import pytest
+from app import create_app
+from app.models import db as _db
+from config import TestingConfig
+
+
+@pytest.fixture(scope='session')
+def app():
+    """
+    Create application for testing.
+    
+    Scope: session - Created once per test session, shared by all tests.
+    This is efficient because app creation is expensive.
+    """
+    app = create_app(TestingConfig)
+    
+    # Establish application context
+    ctx = app.app_context()
+    ctx.push()
+    
+    yield app
+    
+    ctx.pop()
+
+
+@pytest.fixture(scope='session')
+def db(app):
+    """
+    Create database for testing.
+    
+    Scope: session - Created once, uses same database for all tests.
+    We use session scope because database creation is slow.
+    """
+    _db.app = app
+    _db.create_all()
+    
+    yield _db
+    
+    _db.drop_all()
+
+
+@pytest.fixture(scope='function')
+def session(db):
+    """
+    Create a new database session for each test.
+    
+    Scope: function - New session per test, rolled back after each test.
+    This ensures test isolation - no test can affect another.
+    """
+    connection = db.engine.connect()
+    transaction = connection.begin()
+    
+    session = db.create_scoped_session(
+        options={"bind": connection, "binds": {}}
+    )
+    db.session = session
+    
+    yield session
+    
+    transaction.rollback()
+    connection.close()
+    session.remove()
+
+
+@pytest.fixture
+def client(app):
+    """
+    Flask test client for making requests.
+    
+    Scope: function (default) - New client per test.
+    """
+    return app.test_client()
+
+
+@pytest.fixture
+def runner(app):
+    """
+    Flask CLI test runner.
+    
+    Useful for testing CLI commands.
+    """
+    return app.test_cli_runner()</code></pre>
+
+        <div class="info">
+            <strong>Key Pattern:</strong> Notice the scope hierarchy - <code>session</code> for expensive setup (app, db), <code>function</code> for test isolation (session, client).
+        </div>
+
+        <h3>Unit Test conftest.py (tests/unit/conftest.py)</h3>
+
+        <p>Unit tests have specific needs—they should be fast and isolated:</p>
+
+        <pre><code class="language-python"># tests/unit/conftest.py
+"""
+Unit test fixtures.
+
+Unit tests don't need the full application or database.
+These fixtures provide lightweight alternatives.
+"""
+
+import pytest
+from app.models import User, Post, Comment
+
+
+@pytest.fixture
+def sample_user_data():
+    """
+    Provide sample user data for testing.
+    
+    Returns a dict, not a database object. Perfect for testing
+    form validation or user creation logic without hitting the database.
+    """
+    return {
+        'username': 'testuser',
+        'email': 'test@example.com',
+        'password': 'SecurePass123!'
+    }
+
+
+@pytest.fixture
+def sample_post_data():
+    """Provide sample post data."""
+    return {
+        'title': 'Test Post',
+        'content': 'This is test content for a blog post.',
+        'published': True
+    }
+
+
+@pytest.fixture
+def mock_user():
+    """
+    Create a mock user object.
+    
+    This is NOT a database object—it's just a Python object
+    with the right attributes. Perfect for testing code that
+    expects a user but doesn't need database interaction.
+    """
+    user = User()
+    user.id = 1
+    user.username = 'testuser'
+    user.email = 'test@example.com'
+    user.is_active = True
+    return user</code></pre>
+
+        <div class="info">
+            <strong>Unit Test Philosophy:</strong> Notice how these fixtures avoid the database entirely. They provide data structures and mock objects—perfect for fast, isolated tests.
+        </div>
+
+        <h3>Integration Test conftest.py (tests/integration/conftest.py)</h3>
+
+        <p>Integration tests need actual database objects and helper functions:</p>
+
+        <pre><code class="language-python"># tests/integration/conftest.py
+"""
+Integration test fixtures.
+
+Integration tests need database access and helper functions
+for creating related objects and testing workflows.
+"""
+
+import pytest
+from app.models import User, Post, Comment, db
+
+
+@pytest.fixture
+def test_user(session):
+    """
+    Create a real user in the database.
+    
+    Scope: function - New user per test, automatically cleaned up
+    through session rollback.
+    """
+    user = User(
+        username='testuser',
+        email='test@example.com'
+    )
+    user.set_password('password123')
+    session.add(user)
+    session.commit()
+    return user
+
+
+@pytest.fixture
+def auth_user(test_user):
+    """
+    Provide user credentials for authentication.
+    
+    Returns both the user object and login credentials.
+    Useful for tests that need to authenticate.
+    """
+    return {
+        'user': test_user,
+        'username': 'testuser',
+        'password': 'password123'
+    }
+
+
+@pytest.fixture
+def admin_user(session):
+    """Create an admin user."""
+    user = User(
+        username='admin',
+        email='admin@example.com',
+        is_admin=True
+    )
+    user.set_password('adminpass123')
+    session.add(user)
+    session.commit()
+    return user
+
+
+@pytest.fixture
+def test_post(session, test_user):
+    """
+    Create a test post.
+    
+    Depends on test_user fixture - demonstrates fixture composition.
+    """
+    post = Post(
+        title='Test Post',
+        content='This is a test post content.',
+        author=test_user
+    )
+    session.add(post)
+    session.commit()
+    return post
+
+
+@pytest.fixture
+def multiple_posts(session, test_user):
+    """Create multiple posts for testing pagination, etc."""
+    posts = []
+    for i in range(15):
+        post = Post(
+            title=f'Test Post {i+1}',
+            content=f'Content for post {i+1}',
+            author=test_user
+        )
+        session.add(post)
+        posts.append(post)
+    session.commit()
+    return posts
+
+
+@pytest.fixture
+def authenticated_client(client, auth_user):
+    """
+    Provide a logged-in test client.
+    
+    Combines client and auth_user fixtures to provide
+    a client that's already authenticated.
+    """
+    client.post('/auth/login', data={
+        'username': auth_user['username'],
+        'password': auth_user['password']
+    })
+    return client</code></pre>
+
+        <div class="info">
+            <strong>Integration Pattern:</strong> These fixtures create real database objects and provide authenticated clients. Notice how they build on simpler fixtures through dependency injection.
+        </div>
+
+        <h3>E2E Test conftest.py (tests/e2e/conftest.py)</h3>
+
+        <p>End-to-end tests need browser setup and page objects:</p>
+
+        <pre><code class="language-python"># tests/e2e/conftest.py
+"""
+End-to-end test fixtures.
+
+E2E tests need browser automation setup and may need a
+live server for testing JavaScript interactions.
+"""
+
+import pytest
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+
+
+@pytest.fixture(scope='session')
+def browser_options():
+    """
+    Configure browser options.
+    
+    Scope: session - Reuse same options for all tests.
+    """
+    options = Options()
+    options.add_argument('--headless')  # Run without opening browser window
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--window-size=1920,1080')
+    return options
+
+
+@pytest.fixture
+def browser(browser_options):
+    """
+    Provide a Selenium WebDriver instance.
+    
+    Scope: function - New browser per test for isolation.
+    """
+    driver = webdriver.Chrome(options=browser_options)
+    driver.implicitly_wait(10)  # Wait up to 10s for elements
+    
+    yield driver
+    
+    driver.quit()
+
+
+@pytest.fixture(scope='session')
+def live_server_url(app):
+    """
+    Provide URL for live server.
+    
+    In production tests, this might start a real server.
+    For now, we assume the app is running on localhost:5000.
+    """
+    return 'http://localhost:5000'
+
+
+@pytest.fixture
+def login_page(browser, live_server_url):
+    """
+    Provide a LoginPage object.
+    
+    Uses the Page Object Model pattern to encapsulate
+    page interactions.
+    """
+    from tests.e2e.pages.login_page import LoginPage
+    return LoginPage(browser, live_server_url)
+
+
+@pytest.fixture
+def logged_in_user(browser, live_server_url, test_user):
+    """
+    Provide a browser already logged in.
+    
+    Combines browser setup with authentication to provide
+    a logged-in state for E2E tests.
+    """
+    from tests.e2e.pages.login_page import LoginPage
+    
+    login_page = LoginPage(browser, live_server_url)
+    login_page.visit()
+    login_page.login('testuser', 'password123')
+    
+    return browser</code></pre>
+
+        <div class="info">
+            <strong>E2E Pattern:</strong> Notice how E2E fixtures focus on browser setup and page objects. They combine multiple concerns (database, authentication, browser) to provide complete testing scenarios.
+        </div>
+
+        <h2>Reusable Fixture Library</h2>
+
+        <p>Here are some general-purpose fixtures you can adapt to any Flask project:</p>
+
+        <h3>Authentication Helpers</h3>
+
+        <pre><code class="language-python">@pytest.fixture
+def auth_headers(test_user):
+    """
+    Provide authentication headers for API testing.
+    
+    Useful for testing protected API endpoints.
+    """
+    from app.auth import create_token
+    token = create_token(test_user)
+    return {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json'
+    }
+
+
+@pytest.fixture
+def login(client):
+    """
+    Provide a login helper function.
+    
+    Returns a function that logs in with given credentials.
+    More flexible than a pre-logged-in client.
+    """
+    def _login(username, password):
+        return client.post('/auth/login', data={
+            'username': username,
+            'password': password
+        })
+    return _login
+
+
+@pytest.fixture
+def logout(client):
+    """Provide a logout helper function."""
+    def _logout():
+        return client.get('/auth/logout')
+    return _logout</code></pre>
+
+        <h3>Database Helpers</h3>
+
+        <pre><code class="language-python">@pytest.fixture
+def db_with_data(session, test_user):
+    """
+    Provide a database populated with common test data.
+    
+    Useful for tests that need a "realistic" database state.
+    """
+    # Create some posts
+    for i in range(5):
+        post = Post(
+            title=f'Post {i+1}',
+            content=f'Content {i+1}',
+            author=test_user
+        )
+        session.add(post)
+    
+    session.commit()
+    return session
+
+
+@pytest.fixture
+def clean_db(db):
+    """
+    Ensure database is completely empty.
+    
+    Useful for tests that need absolute isolation.
+    """
+    # Delete all data from all tables
+    for table in reversed(db.metadata.sorted_tables):
+        db.session.execute(table.delete())
+    db.session.commit()
+    return db
+
+
+@pytest.fixture
+def db_transaction(session):
+    """
+    Provide a nested transaction that can be rolled back.
+    
+    Useful for testing transaction handling.
+    """
+    connection = session.connection()
+    transaction = connection.begin_nested()
+    
+    yield session
+    
+    transaction.rollback()</code></pre>
+
+        <h3>File Upload Helpers</h3>
+
+        <pre><code class="language-python">import io
+from werkzeug.datastructures import FileStorage
+
+
+@pytest.fixture
+def sample_image():
+    """
+    Provide a sample image file for upload testing.
+    
+    Creates a fake image file in memory.
+    """
+    return FileStorage(
+        stream=io.BytesIO(b"fake image content"),
+        filename="test.jpg",
+        content_type="image/jpeg"
+    )
+
+
+@pytest.fixture
+def sample_text_file():
+    """Provide a sample text file for upload testing."""
+    return FileStorage(
+        stream=io.BytesIO(b"test file content"),
+        filename="test.txt",
+        content_type="text/plain"
+    )
+
+
+@pytest.fixture
+def tmp_upload_folder(tmp_path):
+    """
+    Provide a temporary upload folder.
+    
+    Uses pytest's tmp_path fixture to create a temporary directory.
+    Automatically cleaned up after test.
+    """
+    upload_folder = tmp_path / "uploads"
+    upload_folder.mkdir()
+    return upload_folder</code></pre>
+
+        <h3>Email Testing Helpers</h3>
+
+        <pre><code class="language-python">@pytest.fixture
+def outbox(app):
+    """
+    Provide access to sent emails.
+    
+    Requires Flask-Mail testing mode.
+    """
+    with app.app_context():
+        from flask_mail import Mail
+        mail = Mail(app)
+        
+        # Enable testing mode
+        app.config['TESTING'] = True
+        
+        with mail.record_messages() as outbox:
+            yield outbox
+
+
+@pytest.fixture
+def mock_mail(mocker):
+    """
+    Mock Flask-Mail's send method.
+    
+    Useful when you don't want to test actual email content,
+    just that emails were sent.
+    """
+    return mocker.patch('flask_mail.Mail.send')</code></pre>
+
+        <h3>Time Travel Helpers</h3>
+
+        <pre><code class="language-python">from freezegun import freeze_time
+from datetime import datetime, timedelta
+
+
+@pytest.fixture
+def frozen_time():
+    """
+    Provide a frozen time for testing.
+    
+    Returns a freezegun context manager you can use in tests.
+    """
+    return freeze_time("2024-01-01 12:00:00")
+
+
+@pytest.fixture
+def yesterday():
+    """Provide yesterday's date."""
+    return datetime.now() - timedelta(days=1)
+
+
+@pytest.fixture
+def tomorrow():
+    """Provide tomorrow's date."""
+    return datetime.now() + timedelta(days=1)</code></pre>
+
+        <h3>API Testing Helpers</h3>
+
+        <pre><code class="language-python">import json
+
+
+@pytest.fixture
+def json_request(client):
+    """
+    Provide a helper for making JSON API requests.
+    
+    Returns a function that automatically sets JSON headers.
+    """
+    def _make_request(method, url, data=None, headers=None):
+        headers = headers or {}
+        headers['Content-Type'] = 'application/json'
+        
+        if data:
+            data = json.dumps(data)
+        
+        return client.open(
+            url,
+            method=method,
+            data=data,
+            headers=headers
+        )
+    
+    return _make_request
+
+
+@pytest.fixture
+def api_client(client):
+    """
+    Wrapper around Flask test client for API testing.
+    
+    Provides convenience methods for common API operations.
+    """
+    class APIClient:
+        def __init__(self, client):
+            self.client = client
+        
+        def get(self, url, headers=None):
+            return self.client.get(url, headers=headers)
+        
+        def post(self, url, data, headers=None):
+            headers = headers or {}
+            headers['Content-Type'] = 'application/json'
+            return self.client.post(
+                url,
+                data=json.dumps(data),
+                headers=headers
+            )
+        
+        def put(self, url, data, headers=None):
+            headers = headers or {}
+            headers['Content-Type'] = 'application/json'
+            return self.client.put(
+                url,
+                data=json.dumps(data),
+                headers=headers
+            )
+        
+        def delete(self, url, headers=None):
+            return self.client.delete(url, headers=headers)
+    
+    return APIClient(client)</code></pre>
+
+        <h2>Factory Patterns</h2>
+
+        <p>Here's an example of a complete <code>factories.py</code> file using factory_boy:</p>
+
+        <pre><code class="language-python"># tests/fixtures/factories.py
+"""
+Factory patterns for creating test objects.
+
+Uses factory_boy to create model instances with realistic data.
+"""
+
+import factory
+from faker import Faker
+from app.models import User, Post, Comment, db
+
+
+fake = Faker()
+
+
+class BaseFactory(factory.alchemy.SQLAlchemyModelFactory):
+    """Base factory with common configuration."""
+    
+    class Meta:
+        sqlalchemy_session = db.session
+        sqlalchemy_session_persistence = 'commit'
+
+
+class UserFactory(BaseFactory):
+    """
+    Factory for creating User objects.
+    
+    Usage:
+        user = UserFactory()  # Create with defaults
+        user = UserFactory(username='custom')  # Override attribute
+        users = UserFactory.create_batch(5)  # Create multiple
+    """
+    
+    class Meta:
+        model = User
+    
+    username = factory.Sequence(lambda n: f'user{n}')
+    email = factory.LazyAttribute(lambda obj: f'{obj.username}@example.com')
+    is_active = True
+    is_admin = False
+    
+    @factory.post_generation
+    def password(obj, create, extracted, **kwargs):
+        """Set password after creation."""
+        if not create:
+            return
+        
+        password = extracted if extracted else 'password123'
+        obj.set_password(password)
+
+
+class AdminUserFactory(UserFactory):
+    """Factory for admin users."""
+    is_admin = True
+
+
+class PostFactory(BaseFactory):
+    """Factory for creating Post objects."""
+    
+    class Meta:
+        model = Post
+    
+    title = factory.Faker('sentence', nb_words=6)
+    content = factory.Faker('paragraph', nb_sentences=10)
+    published = True
+    author = factory.SubFactory(UserFactory)
+
+
+class CommentFactory(BaseFactory):
+    """Factory for creating Comment objects."""
+    
+    class Meta:
+        model = Comment
+    
+    content = factory.Faker('paragraph', nb_sentences=3)
+    author = factory.SubFactory(UserFactory)
+    post = factory.SubFactory(PostFactory)</code></pre>
+
+        <div class="info">
+            <strong>Factory Benefits:</strong> Factories let you create complex test data quickly. <code>UserFactory.create_batch(10)</code> creates 10 users with realistic, varied data—much better than manual creation!
+        </div>
+
+        <h2>Configuration Files</h2>
+
+        <p>Here's a complete <code>pytest.ini</code> configuration:</p>
+
+        <pre><code class="language-ini"># pytest.ini
+[pytest]
+# Test discovery
+testpaths = tests
+python_files = test_*.py
+python_classes = Test*
+python_functions = test_*
+
+# Output options
+addopts =
+    -v
+    --strict-markers
+    --tb=short
+    --cov=app
+    --cov-report=html
+    --cov-report=term-missing
+
+# Markers
+markers =
+    unit: Unit tests (fast, no database)
+    integration: Integration tests (database required)
+    e2e: End-to-end tests (slow, browser required)
+    slow: Tests that take a long time
+    auth: Tests related to authentication
+    api: API endpoint tests
+
+# Coverage options
+[coverage:run]
+branch = True
+source = app
+omit =
+    */tests/*
+    */venv/*
+    */migrations/*
+
+[coverage:report]
+precision = 2
+show_missing = True
+skip_covered = False</code></pre>
+
+        <p><strong>Usage examples:</strong></p>
+
+        <pre><code class="language-bash"># Run only unit tests
+pytest -m unit
+
+# Run all except slow tests
+pytest -m "not slow"
+
+# Run auth-related tests
+pytest -m auth
+
+# Run with minimal output
+pytest -q
+
+# Run specific test file
+pytest tests/unit/test_models.py
+
+# Run specific test
+pytest tests/unit/test_models.py::test_user_password_hashing</code></pre>
+
+        <h2>Test Naming Conventions</h2>
+
+        <p>Consistent naming makes your test suite easier to navigate. Here are the conventions used in FlaskBlog Pro:</p>
+
+        <h3>Test File Names</h3>
+
+        <ul>
+            <li><code>test_models.py</code> - Tests for models.py</li>
+            <li><code>test_forms.py</code> - Tests for forms.py</li>
+            <li><code>test_auth.py</code> - Tests for auth blueprint/workflow</li>
+            <li><code>test_api.py</code> - Tests for API endpoints</li>
+        </ul>
+
+        <div class="info">
+            <strong>Pattern:</strong> Test files mirror application structure. If you have <code>app/auth/routes.py</code>, tests go in <code>tests/integration/test_auth.py</code>.
+        </div>
+
+        <h3>Test Function Names</h3>
+
+        <p>Test names should describe what they test and the expected outcome:</p>
+
+        <pre><code class="language-python"># Good test names
+def test_user_password_hashing():
+    """Test that passwords are hashed correctly."""
+    pass
+
+def test_create_post_requires_authentication():
+    """Test that unauthenticated users cannot create posts."""
+    pass
+
+def test_post_validation_rejects_empty_title():
+    """Test that post form rejects empty titles."""
+    pass
+
+def test_api_returns_404_for_nonexistent_post():
+    """Test API returns 404 when post doesn't exist."""
+    pass
+
+# Less good - too vague
+def test_user():
+    pass
+
+def test_post_creation():
+    pass
+
+# Less good - too implementation-focused
+def test_post_save_method():
+    pass</code></pre>
+
+        <div class="info">
+            <strong>Pattern:</strong> <code>test_[what]_[condition]_[outcome]</code> makes it clear what's being tested and what should happen.
+        </div>
+
+        <h3>Fixture Names</h3>
+
+        <p>Fixture names should be descriptive nouns:</p>
+
+        <pre><code class="language-python"># Good fixture names
+@pytest.fixture
+def test_user():  # Clear: provides a test user
+    pass
+
+@pytest.fixture
+def authenticated_client():  # Clear: client that's logged in
+    pass
+
+@pytest.fixture
+def sample_post_data():  # Clear: data for creating a post
+    pass
+
+# Less clear
+@pytest.fixture
+def user():  # Too generic
+    pass
+
+@pytest.fixture
+def logged_in():  # What does this provide?
+    pass</code></pre>
+
+        <h2>Common Patterns</h2>
+
+        <p>Here are some patterns you'll use frequently:</p>
+
+        <h3>Arrange-Act-Assert Pattern</h3>
+
+        <p>Structure your tests with clear sections:</p>
+
+        <pre><code class="language-python">def test_user_registration(client):
+    """Test user registration workflow."""
+    # Arrange - Set up test data
+    user_data = {
+        'username': 'newuser',
+        'email': 'new@example.com',
+        'password': 'SecurePass123!'
+    }
+    
+    # Act - Perform the action
+    response = client.post('/auth/register', data=user_data)
+    
+    # Assert - Verify the outcome
+    assert response.status_code == 302  # Redirect after success
+    assert User.query.filter_by(username='newuser').first() is not None</code></pre>
+
+        <h3>Testing Multiple Scenarios</h3>
+
+        <p>Use parametrize for testing multiple inputs:</p>
+
+        <pre><code class="language-python">import pytest
+
+
+@pytest.mark.parametrize('username,email,password,expected_error', [
+    ('', 'test@test.com', 'pass123', 'Username is required'),
+    ('user', '', 'pass123', 'Email is required'),
+    ('user', 'test@test.com', '', 'Password is required'),
+    ('user', 'invalid-email', 'pass123', 'Invalid email'),
+    ('ab', 'test@test.com', 'pass123', 'Username too short'),
+])
+def test_registration_validation(client, username, email, password, expected_error):
+    """Test registration form validation."""
+    response = client.post('/auth/register', data={
+        'username': username,
+        'email': email,
+        'password': password
+    })
+    assert expected_error.encode() in response.data</code></pre>
+
+        <h3>Testing Exceptions</h3>
+
+        <p>Use pytest.raises for exception testing:</p>
+
+        <pre><code class="language-python">import pytest
+
+
+def test_invalid_token_raises_error():
+    """Test that invalid token raises appropriate error."""
+    with pytest.raises(ValueError, match="Invalid token"):
+        decode_token('invalid-token-here')</code></pre>
+
+        <h2>Tips for Organizing Large Test Suites</h2>
+
+        <p>As your test suite grows, keep these principles in mind:</p>
+
+        <h3>1. Keep Tests Close to Code</h3>
+
+        <p>Mirror your application structure in tests:</p>
+
+        <pre><code class="language-text">app/
+  auth/
+    routes.py       →  tests/integration/test_auth.py
+  api/
+    posts.py        →  tests/integration/test_api_posts.py
+  models.py         →  tests/unit/test_models.py</code></pre>
+
+        <h3>2. One Assertion Per Test (Usually)</h3>
+
+        <p>Tests should verify one behavior:</p>
+
+        <pre><code class="language-python"># Good - tests one behavior
+def test_login_with_valid_credentials(client, test_user):
+    """Test login succeeds with valid credentials."""
+    response = client.post('/auth/login', data={
+        'username': 'testuser',
+        'password': 'password123'
+    })
+    assert response.status_code == 302
+
+# Separate test for different behavior
+def test_login_redirects_to_dashboard(authenticated_client):
+    """Test login redirects to dashboard."""
+    # ... test code
+    assert response.location.endswith('/dashboard')
+
+# Less good - testing multiple behaviors
+def test_login(client, test_user):
+    """Test login."""
+    response = client.post('/auth/login', data={...})
+    assert response.status_code == 302
+    assert 'token' in session
+    assert User.query.get(1).last_login is not None
+    # Too many assertions about different things!</code></pre>
+
+        <h3>3. Use Markers for Organization</h3>
+
+        <p>Group related tests with markers:</p>
+
+        <pre><code class="language-python">@pytest.mark.auth
+@pytest.mark.integration
+def test_login_workflow():
+    """Test complete login workflow."""
+    pass</code></pre>
+
+        <h3>4. Share Setup, Not Tests</h3>
+
+        <p>If multiple tests need the same setup, use fixtures:</p>
+
+        <pre><code class="language-python"># Good - shared setup in fixture
+@pytest.fixture
+def blog_with_posts(session, test_user):
+    """Provide blog with 10 posts."""
+    posts = [
+        Post(title=f'Post {i}', content=f'Content {i}', author=test_user)
+        for i in range(10)
+    ]
+    session.add_all(posts)
+    session.commit()
+    return posts
+
+def test_pagination(blog_with_posts):
+    """Test pagination works."""
+    # Test code here
+    pass
+
+def test_filtering(blog_with_posts):
+    """Test filtering works."""
+    # Test code here
+    pass
+
+# Less good - duplicating setup
+def test_pagination():
+    # Create 10 posts...
+    # Test pagination
+    pass
+
+def test_filtering():
+    # Create 10 posts again...
+    # Test filtering
+    pass</code></pre>
+
+        <h2>What We've Learned</h2>
+
+        <p>In this appendix, you've seen real-world examples of test suite organization:</p>
+
+        <ul>
+            <li>✓ Complete project structure separating test types</li>
+            <li>✓ Hierarchical conftest.py files for different test scopes</li>
+            <li>✓ Reusable fixtures for common testing needs</li>
+            <li>✓ Factory patterns for creating test data</li>
+            <li>✓ pytest.ini configuration for test discovery and coverage</li>
+            <li>✓ Naming conventions that make tests self-documenting</li>
+            <li>✓ Common patterns like AAA and parametrization</li>
+            <li>✓ Principles for organizing large test suites</li>
+        </ul>
+
+        <h2>Before You Continue...</h2>
+
+        <p>Before you move on, make sure you:</p>
+
+        <ol>
+            <li>Understand the reasoning behind separating tests by type</li>
+            <li>Can create appropriate fixtures for different test scopes</li>
+            <li>Know when to use session vs function scope</li>
+            <li>Can structure your own project's test directory</li>
+            <li>Understand how to use markers for test organization</li>
+            <li>Feel comfortable adapting these examples to your projects</li>
+            <li>Remember: start simple and expand as needed!</li>
+        </ol>
+
+        <p>The structure shown here is for a full-featured application. Your project might be simpler—and that's fine! Start with just <code>tests/conftest.py</code> and <code>tests/test_routes.py</code>, then expand your structure as your application grows.</p>
+
+        <div class="success">
+            <strong>Ready for Your Pre-Deployment Checklist?</strong> Continue to <a href="appendix-c.html" style="color: white; text-decoration: underline;">Appendix C: Testing Checklist</a> to ensure you haven't missed any critical tests before deploying.
+        </div>
+
+        <div class="nav-links">
+            <a href="appendix-a.html">← Appendix A</a>
+            <a href="index.html">Index</a>
+            <a href="appendix-c.html">Appendix C →</a>
+        </div>
+
+        <footer>
+            <p>Flask Testing Mastery - A comprehensive course on testing Flask applications</p>
+            <p style="font-size: 0.9em;">Questions or feedback? Let me know!</p>
+        </footer>
+    </div>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-ini.min.js"></script>
+</body>
+</html>
