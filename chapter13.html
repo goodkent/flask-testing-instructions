@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 13: Continuous Integration and Testing - Flask Testing Mastery</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/prism.css">
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="chapter12.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter14.html">Next Chapter →</a>
+        </div>
+
+        <h1>Chapter 13: Continuous Integration and Testing</h1>
+        <p class="chapter-subtitle">Automating Your Test Suite for Every Code Change</p>
+
+        <div class="github-links">
+            <span class="github-label">Chapter Code:</span>
+            <a href="https://github.com/goodkent/flask-testing/tree/ch13-end" class="github-link">Browse</a>
+            <a href="https://github.com/goodkent/flask-testing/archive/refs/tags/ch13-end.zip" class="github-link">Zip</a>
+            <a href="https://github.com/goodkent/flask-testing/compare/ch12-end...ch13-end" class="github-link">Diff</a>
+        </div>
+
+        <div class="intro-section">
+            <p>Welcome back! In the previous chapter, you learned how to organize and maintain a healthy test suite with clear naming conventions, logical structure, and intelligent coverage analysis. Your FlaskBlog Pro project now has a comprehensive, well-organized test suite covering hundreds of test cases. That's an incredible achievement!</p>
+
+            <p>But here's a question: Have you ever worked on a team where someone committed code that broke the tests, and nobody noticed until later? Or have you personally run the tests before committing, only to realize later that you tested on Python 3.11 but your production server runs Python 3.9? Or maybe you've wondered: "If I have all these tests, why do I have to remember to run them manually every single time?"</p>
+
+            <p>This is where continuous integration (CI) comes in. CI is the practice of automatically running your tests whenever code changes—on every commit, on every pull request, before every deployment. It's like having a vigilant robot teammate who never forgets to run the tests, checks multiple Python versions, verifies compatibility with different databases, and reports problems immediately. With CI, you can confidently merge code knowing that if the tests pass, your changes work correctly across all supported environments.</p>
+
+            <p>In this chapter, you're going to learn how to automate your entire test suite using GitHub Actions. You'll set up workflows that run tests on every push, test across multiple Python versions using tox, integrate code coverage reporting, and use pre-commit hooks to catch issues before they're even committed. By the end, you'll have a complete CI/CD pipeline that makes your test suite valuable not just to you, but to your entire team!</p>
+        </div>
+
+        <h2>Learning Objectives</h2>
+
+        <ul>
+            <li>Understand what continuous integration is and why it matters for team development</li>
+            <li>Set up GitHub Actions workflows to run tests automatically on every push</li>
+            <li>Use tox to test your application across multiple Python versions</li>
+            <li>Test compatibility with multiple databases (SQLite, PostgreSQL)</li>
+            <li>Integrate code coverage reporting with codecov or coveralls</li>
+            <li>Configure pre-commit hooks to run tests before committing code</li>
+            <li>Create different test suites (smoke tests, regression tests, full suite) for different scenarios</li>
+            <li>Build a complete CI/CD pipeline from commit to deployment</li>
+        </ul>
+
+        <h2>Why Continuous Integration Matters</h2>
+
+        <p>Before we dive into the technical setup, let's talk about why CI is essential for modern software development. Imagine you're working on FlaskBlog Pro with three other developers. Here's what happens without CI:</p>
+
+        <ul>
+            <li>Developer A commits a change that breaks the login tests, but they forgot to run the tests locally</li>
+            <li>Developer B pulls the latest code and spends 30 minutes debugging why tests are failing, not realizing it was Developer A's commit</li>
+            <li>Developer C is adding a new feature but can't tell if their code works because the tests were already broken</li>
+            <li>Your code works on your Python 3.11 laptop but fails on the Python 3.9 production server</li>
+            <li>A bug slips into production because nobody ran the integration tests before deploying</li>
+        </ul>
+
+        <p>These problems are so common that they have names: "works on my machine," "broken main branch," "integration hell." CI solves all of them by making testing automatic, consistent, and comprehensive.</p>
+
+        <p>Here's what happens with CI:</p>
+
+        <ul>
+            <li>Every commit triggers automatic test runs—no one can forget</li>
+            <li>Tests run on multiple Python versions, catching compatibility issues immediately</li>
+            <li>Pull requests show test results before merging—broken code never reaches the main branch</li>
+            <li>Coverage reports highlight code that lacks testing</li>
+            <li>Pre-commit hooks catch common issues before they're even committed</li>
+            <li>Everyone sees the same test results regardless of their local environment</li>
+        </ul>
+
+        <p>CI transforms your test suite from a personal tool into a team safety net. Let's set it up!</p>
+
+        <h2>Setting Up GitHub Actions</h2>
+
+        <p>GitHub Actions is GitHub's built-in CI/CD platform. It runs workflows automatically when specific events happen—like pushing code or opening a pull request. The best part? For public repositories, it's completely free. For private repositories, you get 2,000 minutes per month free (plenty for most projects).</p>
+
+        <p>GitHub Actions workflows are defined in YAML files in the <code>.github/workflows/</code> directory. Let's create your first workflow.</p>
+
+        <h3>Creating Your First Workflow</h3>
+
+        <p>In your FlaskBlog Pro project, create the workflows directory:</p>
+
+        <pre><code class="language-bash">$ mkdir -p .github/workflows</code></pre>
+
+        <p>Now create a file called <code>.github/workflows/tests.yml</code>:</p>
+
+        <pre><code class="language-yaml"># .github/workflows/tests.yml: Main test workflow
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+    
+    - name: Run tests
+      run: |
+        pytest --cov=app --cov-report=term-missing
+    
+    - name: Check coverage threshold
+      run: |
+        coverage report --fail-under=80</code></pre>
+
+        <p>Let's break down what this workflow does:</p>
+
+        <ul>
+            <li><strong>name: Tests</strong> - The workflow name that appears in GitHub's UI</li>
+            <li><strong>on: push/pull_request</strong> - Triggers when code is pushed to main/develop or when a PR is opened</li>
+            <li><strong>jobs: test</strong> - Defines a job called "test" that runs on Ubuntu</li>
+            <li><strong>actions/checkout@v4</strong> - Checks out your repository code</li>
+            <li><strong>actions/setup-python@v5</strong> - Installs Python 3.11</li>
+            <li><strong>Install dependencies</strong> - Installs your project dependencies</li>
+            <li><strong>Run tests</strong> - Executes pytest with coverage reporting</li>
+            <li><strong>Check coverage threshold</strong> - Fails if coverage drops below 80%</li>
+        </ul>
+
+        <p>Commit and push this file:</p>
+
+        <pre><code class="language-bash">$ git add .github/workflows/tests.yml
+$ git commit -m "Add GitHub Actions workflow"
+$ git push</code></pre>
+
+        <p>Now visit your repository on GitHub and click the "Actions" tab. You'll see your workflow running! In a minute or two, you'll see whether your tests passed or failed. If they passed, you'll see a green checkmark. If they failed, you'll see a red X, and you can click to see which test failed and why.</p>
+
+        <p>Congratulations! You've just set up continuous integration. Every time you or anyone on your team pushes code, GitHub will automatically run all your tests and report the results.</p>
+
+        <h3>Understanding Workflow Triggers</h3>
+
+        <p>The <code>on:</code> section controls when your workflow runs. You have several options:</p>
+
+        <pre><code class="language-yaml"># Run on every push to any branch
+on: push
+
+# Run only on specific branches
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+
+# Run on pull requests to main
+on:
+  pull_request:
+    branches: [ main ]
+
+# Run on push to main OR pull requests to main
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# Run on schedule (cron syntax)
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight
+
+# Run manually from GitHub UI
+on: workflow_dispatch</code></pre>
+
+        <p>For most projects, you want to run tests on:</p>
+        <ul>
+            <li>Pushes to your main branches (main, develop)</li>
+            <li>All pull requests to main (to catch issues before merging)</li>
+        </ul>
+
+        <p>This catches problems early without running tests excessively (like on every push to every feature branch, which can consume your Action minutes quickly).</p>
+
+        <h2>Testing Across Multiple Python Versions</h2>
+
+        <p>Your tests pass on Python 3.11—that's great! But what about Python 3.9? Or 3.10? Or 3.12? Many projects need to support multiple Python versions, and CI makes it easy to test them all.</p>
+
+        <p>GitHub Actions supports a matrix strategy that runs the same workflow with different configurations. Here's how to test across Python 3.9, 3.10, 3.11, and 3.12:</p>
+
+        <pre><code class="language-yaml"># .github/workflows/tests.yml: Testing multiple Python versions
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+    
+    - name: Run tests
+      run: |
+        pytest --cov=app --cov-report=term-missing
+    
+    - name: Check coverage threshold
+      run: |
+        coverage report --fail-under=80</code></pre>
+
+        <p>The magic happens in the <code>strategy.matrix</code> section. This tells GitHub Actions: "Run this job four times, once for each Python version." The <code>${{ matrix.python-version }}</code> syntax inserts the current Python version into the workflow.</p>
+
+        <p>When you push this change, GitHub will run four separate jobs—one for each Python version. If your tests pass on all four, you'll see four green checkmarks. If they fail on Python 3.9 but pass on the others, you'll see exactly which version has problems.</p>
+
+        <h3>Why Test Multiple Python Versions?</h3>
+
+        <p>You might be thinking: "I only use Python 3.11, so why test other versions?" Here are some real scenarios where this matters:</p>
+
+        <ul>
+            <li>Your local development machine runs Python 3.11, but your production server runs Python 3.9</li>
+            <li>You use a dictionary union operator (<code>|</code>) that works in 3.9+ but you want to support Python 3.8 users</li>
+            <li>A library you depend on has different behavior across Python versions</li>
+            <li>You want to prepare for Python 3.12's changes before migrating production</li>
+            <li>Your open-source library needs to support what your users are running</li>
+        </ul>
+
+        <p>Testing multiple versions catches these issues early, before they affect users. It costs you nothing extra (in CI time, it runs in parallel), and it prevents surprises in production.</p>
+
+        <h2>Using Tox for Local Multi-Version Testing</h2>
+
+        <p>GitHub Actions is great for automated testing, but what if you want to test multiple Python versions locally? That's where tox comes in. Tox is a tool that automates testing across different Python versions and environments.</p>
+
+        <h3>Installing and Configuring Tox</h3>
+
+        <p>First, install tox:</p>
+
+        <pre><code class="language-bash">$ pip install tox</code></pre>
+
+        <p>Create a <code>tox.ini</code> file in your project root:</p>
+
+        <pre><code class="language-ini"># tox.ini: Tox configuration
+[tox]
+envlist = py39,py310,py311,py312
+skipsdist = True
+
+[testenv]
+deps =
+    pytest
+    pytest-cov
+    -r requirements.txt
+commands =
+    pytest --cov=app --cov-report=term-missing
+setenv =
+    PYTHONPATH = {toxinidir}
+    FLASK_ENV = testing</code></pre>
+
+        <p>Now you can run tests across all Python versions with one command:</p>
+
+        <pre><code class="language-bash">$ tox</code></pre>
+
+        <p>Tox will:</p>
+        <ol>
+            <li>Create a virtual environment for Python 3.9</li>
+            <li>Install your dependencies in that environment</li>
+            <li>Run your tests</li>
+            <li>Repeat for Python 3.10, 3.11, and 3.12</li>
+            <li>Report results for all versions</li>
+        </ol>
+
+        <p>Here's what the output looks like:</p>
+
+        <pre><code class="language-bash">$ tox
+py39: commands succeeded
+py310: commands succeeded
+py311: commands succeeded
+py312: commands succeeded
+  congratulations :)</code></pre>
+
+        <p>If a test fails in any version, tox shows you exactly which one:</p>
+
+        <pre><code class="language-bash">$ tox
+py39: commands failed
+py310: commands succeeded
+py311: commands succeeded
+py312: commands succeeded
+ERROR: InvocationError for command...</code></pre>
+
+        <p>This tells you: "Your code works on Python 3.10-3.12, but something is broken on Python 3.9."</p>
+
+        <h3>Running a Single Environment</h3>
+
+        <p>You don't always want to test all versions—especially during development. Tox lets you run a single environment:</p>
+
+        <pre><code class="language-bash"># Test only Python 3.11
+$ tox -e py311
+
+# Test only Python 3.9 and 3.12
+$ tox -e py39,py312</code></pre>
+
+        <p>This is faster for quick verification during development. Save the full multi-version test for before committing or let CI handle it.</p>
+
+        <h3>Adding Tox to GitHub Actions</h3>
+
+        <p>You can use tox in GitHub Actions too. This ensures your local testing matches CI exactly:</p>
+
+        <pre><code class="language-yaml"># .github/workflows/tests.yml: Using tox in CI
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install tox
+      run: pip install tox
+    
+    - name: Run tox
+      run: tox -e py$(echo "${{ matrix.python-version }}" | tr -d .)</code></pre>
+
+        <p>The <code>tr -d .</code> command converts "3.11" to "311" to match tox's environment naming (py311).</p>
+
+        <h2>Testing with Multiple Databases</h2>
+
+        <p>Your tests currently run against SQLite, which is perfect for development—it's fast, requires no setup, and works everywhere. But if your production application uses PostgreSQL or MySQL, you have a problem: subtle differences in database behavior can cause bugs that only appear in production.</p>
+
+        <p>For example, SQLite is case-insensitive by default, but PostgreSQL is case-sensitive. Your login might work in SQLite tests but fail in PostgreSQL production because you're comparing "user@example.com" to "User@Example.Com". These bugs are frustrating because they pass all tests but break in production.</p>
+
+        <p>The solution? Test against the same database you use in production. GitHub Actions makes this easy using services.</p>
+
+        <h3>Adding PostgreSQL to Your Workflow</h3>
+
+        <p>Here's how to run your tests against both SQLite (for speed) and PostgreSQL (for production accuracy):</p>
+
+        <pre><code class="language-yaml"># .github/workflows/tests.yml: Testing with PostgreSQL
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11']
+        database: ['sqlite', 'postgresql']
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+        if [ "${{ matrix.database }}" = "postgresql" ]; then
+          pip install psycopg2-binary
+        fi
+    
+    - name: Run tests with SQLite
+      if: matrix.database == 'sqlite'
+      run: |
+        pytest --cov=app --cov-report=term-missing
+      env:
+        DATABASE_URL: sqlite:///test.db
+    
+    - name: Run tests with PostgreSQL
+      if: matrix.database == 'postgresql'
+      run: |
+        pytest --cov=app --cov-report=term-missing
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+    
+    - name: Check coverage threshold
+      run: |
+        coverage report --fail-under=80</code></pre>
+
+        <p>Let's understand what this does:</p>
+
+        <ul>
+            <li><strong>services: postgres</strong> - Starts a PostgreSQL container before tests run</li>
+            <li><strong>health-cmd pg_isready</strong> - Waits until PostgreSQL is ready before running tests</li>
+            <li><strong>matrix: database</strong> - Runs the job twice: once with SQLite, once with PostgreSQL</li>
+            <li><strong>if: matrix.database == 'sqlite'</strong> - Conditionally runs steps based on which database is being tested</li>
+            <li><strong>DATABASE_URL</strong> - Sets the database connection string for each database type</li>
+        </ul>
+
+        <p>Your application needs to read the <code>DATABASE_URL</code> environment variable. Update your <code>config.py</code>:</p>
+
+        <pre><code class="language-python"># config.py: Reading DATABASE_URL from environment
+import os
+from urllib.parse import urlparse
+
+class Config:
+    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key'
+    
+    # Support DATABASE_URL for CI/production
+    DATABASE_URL = os.environ.get('DATABASE_URL')
+    if DATABASE_URL:
+        # Parse the URL to handle both SQLite and PostgreSQL
+        url = urlparse(DATABASE_URL)
+        if url.scheme == 'sqlite':
+            SQLALCHEMY_DATABASE_URI = DATABASE_URL
+        else:
+            SQLALCHEMY_DATABASE_URI = DATABASE_URL
+    else:
+        # Default to SQLite for development
+        SQLALCHEMY_DATABASE_URI = 'sqlite:///app.db'
+    
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+class TestingConfig(Config):
+    TESTING = True
+    WTF_CSRF_ENABLED = False
+    
+    # Use environment DATABASE_URL if set, otherwise SQLite
+    DATABASE_URL = os.environ.get('DATABASE_URL')
+    if DATABASE_URL:
+        SQLALCHEMY_DATABASE_URI = DATABASE_URL
+    else:
+        SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'</code></pre>
+
+        <p>Now your tests will run against both SQLite and PostgreSQL in CI, catching database-specific bugs before they reach production!</p>
+
+        <h3>When to Test Multiple Databases</h3>
+
+        <p>Testing multiple databases adds complexity and CI time. Here's when it's worth it:</p>
+
+        <ul>
+            <li><strong>Always</strong> if your production database is different from your development database (e.g., PostgreSQL in production, SQLite in development)</li>
+            <li><strong>Consider</strong> if you support user-configurable databases (your users might use MySQL, PostgreSQL, or SQLite)</li>
+            <li><strong>Skip</strong> if you use SQLite everywhere (development, testing, production) or if all environments use the same database</li>
+        </ul>
+
+        <p>A good compromise: Run SQLite tests on every push (fast feedback), but run PostgreSQL tests only on pull requests or nightly (comprehensive verification without slowing down development).</p>
+
+        <h2>Integrating Code Coverage Reporting</h2>
+
+        <p>In Chapter 12, you learned how to measure code coverage locally with pytest-cov. But how do you track coverage over time? How do you know if a pull request improves or decreases coverage? That's where coverage services like Codecov and Coveralls come in.</p>
+
+        <p>These services:</p>
+        <ul>
+            <li>Track coverage history over time (so you can see trends)</li>
+            <li>Show coverage changes in pull requests (did this PR improve or hurt coverage?)</li>
+            <li>Fail builds if coverage drops below a threshold</li>
+            <li>Generate visual coverage reports</li>
+            <li>Add coverage badges to your README</li>
+        </ul>
+
+        <h3>Setting Up Codecov</h3>
+
+        <p>Codecov is free for open-source projects. Here's how to integrate it:</p>
+
+        <p>First, sign up at <a href="https://codecov.io" target="_blank">codecov.io</a> using your GitHub account and authorize it to access your repositories.</p>
+
+        <p>Update your GitHub Actions workflow to upload coverage:</p>
+
+        <pre><code class="language-yaml"># .github/workflows/tests.yml: Upload coverage to Codecov
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+    
+    - name: Run tests with coverage
+      run: |
+        pytest --cov=app --cov-report=xml --cov-report=term-missing
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: true
+        token: ${{ secrets.CODECOV_TOKEN }}</code></pre>
+
+        <p>Notice two changes:</p>
+        <ol>
+            <li><code>--cov-report=xml</code> generates an XML coverage report that Codecov understands</li>
+            <li><code>codecov/codecov-action@v4</code> uploads the report to Codecov</li>
+        </ol>
+
+        <p>After setting up the Codecov token in your GitHub repository secrets (Settings → Secrets and variables → Actions → New repository secret), every test run will upload coverage to Codecov.</p>
+
+        <h3>Adding a Coverage Badge</h3>
+
+        <p>Once Codecov is collecting coverage, you can add a badge to your README showing current coverage:</p>
+
+        <pre><code class="language-markdown"># README.md: Adding coverage badge
+# FlaskBlog Pro
+
+[![codecov](https://codecov.io/gh/yourname/flask-testing/branch/main/graph/badge.svg)](https://codecov.io/gh/yourname/flask-testing)
+
+A fully-tested blog platform built with Flask...</code></pre>
+
+        <p>Replace <code>yourname/flask-testing</code> with your GitHub username and repository name. The badge will automatically update to show your current coverage percentage!</p>
+
+        <h2>Pre-Commit Hooks: Catching Issues Before Committing</h2>
+
+        <p>CI catches problems after you commit and push. But wouldn't it be better to catch them <em>before</em> committing? That's where pre-commit hooks come in. These are scripts that run automatically when you run <code>git commit</code>, catching issues before they enter version control.</p>
+
+        <h3>Installing Pre-Commit</h3>
+
+        <p>Install the pre-commit framework:</p>
+
+        <pre><code class="language-bash">$ pip install pre-commit</code></pre>
+
+        <p>Create a <code>.pre-commit-config.yaml</code> file in your project root:</p>
+
+        <pre><code class="language-yaml"># .pre-commit-config.yaml: Pre-commit hook configuration
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+  
+  - repo: https://github.com/psf/black
+    rev: 23.12.1
+    hooks:
+      - id: black
+        language_version: python3.11
+  
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.0.0
+    hooks:
+      - id: flake8
+        args: ['--max-line-length=100', '--extend-ignore=E203,W503']
+  
+  - repo: local
+    hooks:
+      - id: pytest-check
+        name: pytest-check
+        entry: pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        args: ['-x', '--tb=short']</code></pre>
+
+        <p>Install the hooks:</p>
+
+        <pre><code class="language-bash">$ pre-commit install</code></pre>
+
+        <p>Now, every time you run <code>git commit</code>, these hooks will run:</p>
+
+        <ol>
+            <li><strong>trailing-whitespace</strong> - Removes whitespace at end of lines</li>
+            <li><strong>end-of-file-fixer</strong> - Ensures files end with a newline</li>
+            <li><strong>check-yaml</strong> - Validates YAML syntax</li>
+            <li><strong>check-added-large-files</strong> - Prevents accidentally committing large files</li>
+            <li><strong>check-merge-conflict</strong> - Catches unresolved merge conflict markers</li>
+            <li><strong>black</strong> - Auto-formats Python code</li>
+            <li><strong>flake8</strong> - Checks Python code style</li>
+            <li><strong>pytest-check</strong> - Runs your test suite</li>
+        </ol>
+
+        <p>Here's what happens when you commit:</p>
+
+        <pre><code class="language-bash">$ git commit -m "Add user profile feature"
+Trim Trailing Whitespace.................................................Passed
+Fix End of Files.........................................................Passed
+Check Yaml...............................................................Passed
+Check for added large files..............................................Passed
+Check for merge conflicts................................................Passed
+black....................................................................Passed
+flake8...................................................................Passed
+pytest-check.............................................................Passed
+[main abc1234] Add user profile feature
+ 3 files changed, 45 insertions(+), 2 deletions(-)</code></pre>
+
+        <p>If any hook fails, the commit is aborted:</p>
+
+        <pre><code class="language-bash">$ git commit -m "Add user profile feature"
+Trim Trailing Whitespace.................................................Passed
+Fix End of Files.........................................................Passed
+Check Yaml...............................................................Passed
+Check for added large files..............................................Passed
+Check for merge conflicts................................................Passed
+black....................................................................Failed
+- hook id: black
+- files were modified by this hook
+
+reformatted app/routes.py
+
+All done! ✨ 🍰 ✨
+1 file reformatted.
+
+flake8...................................................................Skipped
+pytest-check.............................................................Skipped</code></pre>
+
+        <p>The commit was aborted because black reformatted your code. Now you can review the changes, add them, and commit again:</p>
+
+        <pre><code class="language-bash">$ git add app/routes.py
+$ git commit -m "Add user profile feature"
+# Now all hooks pass and the commit succeeds</code></pre>
+
+        <h3>Running Fast Pre-Commit Tests</h3>
+
+        <p>Running your entire test suite on every commit can be slow. If you have hundreds of tests that take minutes to run, waiting for every commit is frustrating. Here's a better approach: run only "smoke tests" on commit, and leave comprehensive testing to CI.</p>
+
+        <p>Create a pytest marker for smoke tests in <code>pytest.ini</code>:</p>
+
+        <pre><code class="language-ini"># pytest.ini: Define smoke test marker
+[pytest]
+markers =
+    smoke: Quick smoke tests that verify basic functionality</code></pre>
+
+        <p>Mark critical tests as smoke tests:</p>
+
+        <pre><code class="language-python"># tests/test_routes.py: Marking smoke tests
+import pytest
+
+@pytest.mark.smoke
+def test_homepage_returns_200():
+    """Critical smoke test: ensure homepage loads."""
+    client = app.test_client()
+    response = client.get('/')
+    assert response.status_code == 200
+
+@pytest.mark.smoke
+def test_api_posts_endpoint_exists():
+    """Critical smoke test: ensure API endpoint works."""
+    client = app.test_client()
+    response = client.get('/api/posts')
+    assert response.status_code == 200
+
+def test_post_detail_page_shows_comments():
+    """Full test: verify comment rendering (not a smoke test)."""
+    # This test won't run on commit, only in CI
+    pass</code></pre>
+
+        <p>Update your pre-commit hook to run only smoke tests:</p>
+
+        <pre><code class="language-yaml"># .pre-commit-config.yaml: Run only smoke tests
+  - repo: local
+    hooks:
+      - id: pytest-check
+        name: pytest-check
+        entry: pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        args: ['-x', '--tb=short', '-m', 'smoke']</code></pre>
+
+        <p>Now commits run only your 10-20 critical smoke tests (taking seconds), while CI runs your full 500+ test suite (taking minutes). This gives you fast feedback on commits while ensuring comprehensive testing before merging.</p>
+
+        <h3>Skipping Pre-Commit Hooks</h3>
+
+        <p>Sometimes you need to commit quickly without running hooks (like when committing a work-in-progress before switching branches). You can skip hooks with:</p>
+
+        <pre><code class="language-bash">$ git commit -m "WIP: experimenting with new feature" --no-verify</code></pre>
+
+        <p>Use this sparingly—hooks exist to protect you from committing broken code!</p>
+
+        <h2>Creating Different Test Suites</h2>
+
+        <p>Not all tests are created equal. Some tests are fast and critical (smoke tests), some verify that existing functionality still works after changes (regression tests), and some are comprehensive but slow (full integration tests). Running the right tests at the right time makes development faster.</p>
+
+        <h3>Defining Test Categories with Markers</h3>
+
+        <p>Pytest markers let you categorize tests. Update your <code>pytest.ini</code>:</p>
+
+        <pre><code class="language-ini"># pytest.ini: Define test markers
+[pytest]
+markers =
+    smoke: Quick tests verifying basic functionality (< 1 second each)
+    unit: Fast isolated unit tests (no database, no external dependencies)
+    integration: Tests that use the database or multiple components
+    slow: Tests that take more than 5 seconds
+    api: Tests for API endpoints
+    e2e: End-to-end tests using Selenium (requires browser)</code></pre>
+
+        <p>Mark your tests accordingly:</p>
+
+        <pre><code class="language-python"># tests/unit/test_models.py: Marking unit tests
+import pytest
+
+@pytest.mark.unit
+@pytest.mark.smoke
+def test_user_model_repr():
+    """Quick unit test: User repr works."""
+    user = User(username='testuser', email='test@example.com')
+    assert 'testuser' in repr(user)
+
+@pytest.mark.unit
+def test_post_slug_generation():
+    """Unit test: Post generates slug from title."""
+    post = Post(title='Hello World')
+    assert post.slug == 'hello-world'
+
+@pytest.mark.integration
+def test_user_posts_relationship(db):
+    """Integration test: User-Post relationship works."""
+    user = User(username='author', email='author@example.com')
+    post = Post(title='Test Post', author=user)
+    db.session.add_all([user, post])
+    db.session.commit()
+    
+    assert post in user.posts
+    assert post.author == user
+
+@pytest.mark.slow
+@pytest.mark.e2e
+def test_complete_user_registration_flow(selenium):
+    """E2E test: Full registration workflow."""
+    # This takes 10+ seconds because it uses a real browser
+    pass</code></pre>
+
+        <h3>Running Specific Test Suites</h3>
+
+        <p>Now you can run different test suites based on what you need:</p>
+
+        <pre><code class="language-bash"># Run smoke tests only (fast, for commits)
+$ pytest -m smoke
+
+# Run unit tests only (no database needed)
+$ pytest -m unit
+
+# Run integration tests (requires database)
+$ pytest -m integration
+
+# Run everything except slow tests (for development)
+$ pytest -m "not slow"
+
+# Run smoke tests and unit tests
+$ pytest -m "smoke or unit"
+
+# Run all API tests that aren't slow
+$ pytest -m "api and not slow"
+
+# Run everything (full suite)
+$ pytest</code></pre>
+
+        <h3>Configuring Different Suites in GitHub Actions</h3>
+
+        <p>You can create separate workflows for different test suites. Create <code>.github/workflows/smoke-tests.yml</code>:</p>
+
+        <pre><code class="language-yaml"># .github/workflows/smoke-tests.yml: Fast smoke tests on every push
+name: Smoke Tests
+
+on:
+  push:
+    branches: [ '**' ]  # Run on all branches
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pytest
+    
+    - name: Run smoke tests
+      run: pytest -m smoke</code></pre>
+
+        <p>And <code>.github/workflows/full-tests.yml</code> for comprehensive testing:</p>
+
+        <pre><code class="language-yaml"># .github/workflows/full-tests.yml: Full test suite on PRs
+name: Full Test Suite
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+    
+    - name: Run full test suite
+      run: pytest --cov=app --cov-report=xml
+    
+    - name: Upload coverage
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml</code></pre>
+
+        <p>This strategy gives you:</p>
+        <ul>
+            <li><strong>Fast feedback</strong> - Smoke tests run on every push to any branch (1-2 minutes)</li>
+            <li><strong>Comprehensive testing</strong> - Full suite runs on pull requests before merging (10-15 minutes)</li>
+            <li><strong>Resource efficiency</strong> - You don't waste CI minutes running full tests on every experimental commit</li>
+        </ul>
+
+        <h3>Regression Test Suite</h3>
+
+        <p>Regression tests verify that bugs you've fixed stay fixed. When you fix a bug, add a test marked as regression:</p>
+
+        <pre><code class="language-python">@pytest.mark.regression
+def test_login_case_insensitive_email():
+    """Regression test: Login should work regardless of email case.
+    
+    Bug #234: Users couldn't log in if they typed their email with
+    different capitalization than they registered with.
+    """
+    user = User(username='test', email='User@Example.Com')
+    user.set_password('password123')
+    db.session.add(user)
+    db.session.commit()
+    
+    # Should work with lowercase
+    assert User.authenticate('user@example.com', 'password123') == user
+    # Should work with different case
+    assert User.authenticate('USER@EXAMPLE.COM', 'password123') == user</code></pre>
+
+        <p>Run regression tests before releases to ensure old bugs haven't returned:</p>
+
+        <pre><code class="language-bash">$ pytest -m regression</code></pre>
+
+        <h2>Putting It All Together: Complete CI/CD Pipeline</h2>
+
+        <p>Let's combine everything you've learned into a complete CI/CD pipeline. Here's what happens from commit to deployment:</p>
+
+        <ol>
+            <li><strong>Developer commits code</strong> - Pre-commit hooks run smoke tests and linting (5-10 seconds)</li>
+            <li><strong>Code is pushed</strong> - GitHub Actions runs smoke tests on that branch (1-2 minutes)</li>
+            <li><strong>Developer opens pull request</strong> - GitHub Actions runs:
+                <ul>
+                    <li>Full test suite on Python 3.9, 3.10, 3.11, 3.12</li>
+                    <li>Tests against both SQLite and PostgreSQL</li>
+                    <li>Coverage reporting with Codecov</li>
+                    <li>Linting and code style checks</li>
+                </ul>
+                (10-15 minutes)
+            </li>
+            <li><strong>Tests pass</strong> - Pull request shows green checkmark, ready for review</li>
+            <li><strong>Code is merged</strong> - Another full test run on main branch</li>
+            <li><strong>Daily</strong> - Scheduled workflow runs full regression suite</li>
+        </ol>
+
+        <p>Here's a complete workflow that implements this:</p>
+
+        <pre><code class="language-yaml"># .github/workflows/ci.yml: Complete CI/CD pipeline
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install linting tools
+      run: |
+        pip install black flake8 isort
+    - name: Run black
+      run: black --check .
+    - name: Run flake8
+      run: flake8 app tests --max-line-length=100
+    - name: Run isort
+      run: isort --check-only .
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+        database: ['sqlite', 'postgresql']
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+        if [ "${{ matrix.database }}" = "postgresql" ]; then
+          pip install psycopg2-binary
+        fi
+    
+    - name: Run tests with SQLite
+      if: matrix.database == 'sqlite'
+      run: pytest --cov=app --cov-report=xml
+      env:
+        DATABASE_URL: sqlite:///test.db
+    
+    - name: Run tests with PostgreSQL
+      if: matrix.database == 'postgresql'
+      run: pytest --cov=app --cov-report=xml
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+    
+    - name: Upload coverage
+      if: matrix.python-version == '3.11' && matrix.database == 'sqlite'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+  regression:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pytest
+    - name: Run regression tests
+      run: pytest -m regression</code></pre>
+
+        <h2>Troubleshooting CI Issues</h2>
+
+        <p>CI can be frustrating when things work locally but fail in CI. Here are common problems and solutions:</p>
+
+        <h3>Tests Pass Locally But Fail in CI</h3>
+
+        <p>This is usually caused by environment differences. Check these common issues:</p>
+
+        <div class="warning">
+            <p><strong>Problem:</strong> "ModuleNotFoundError" in CI but not locally</p>
+            <p><strong>Solution:</strong> Your requirements.txt is missing a dependency. Run <code>pip freeze > requirements.txt</code> to capture all dependencies.</p>
+        </div>
+
+        <div class="warning">
+            <p><strong>Problem:</strong> Tests fail with "No module named 'app'"</p>
+            <p><strong>Solution:</strong> Add <code>PYTHONPATH</code> to your workflow:</p>
+            <pre><code class="language-yaml">    - name: Run tests
+      run: pytest
+      env:
+        PYTHONPATH: ${{ github.workspace }}</code></pre>
+        </div>
+
+        <div class="warning">
+            <p><strong>Problem:</strong> Database tests fail with "Table already exists"</p>
+            <p><strong>Solution:</strong> Your test fixtures aren't cleaning up properly. Ensure your <code>db</code> fixture drops tables after each test:</p>
+            <pre><code class="language-python">@pytest.fixture
+def db(app):
+    with app.app_context():
+        _db.create_all()
+        yield _db
+        _db.session.remove()
+        _db.drop_all()  # Important: clean up!</code></pre>
+        </div>
+
+        <h3>Workflow Syntax Errors</h3>
+
+        <div class="warning">
+            <p><strong>Problem:</strong> "Invalid workflow file"</p>
+            <p><strong>Solution:</strong> YAML is strict about indentation. Use 2 spaces (not tabs) for indentation. You can validate YAML at <a href="https://www.yamllint.com/" target="_blank">yamllint.com</a>.</p>
+        </div>
+
+        <h3>Slow CI Runs</h3>
+
+        <div class="warning">
+            <p><strong>Problem:</strong> Tests take 30+ minutes in CI</p>
+            <p><strong>Solution:</strong> Several optimizations:
+                <ul>
+                    <li>Use dependency caching to avoid reinstalling packages every time</li>
+                    <li>Run tests in parallel with <code>pytest -n auto</code> (requires pytest-xdist)</li>
+                    <li>Split long tests into separate jobs that run concurrently</li>
+                </ul>
+            </p>
+        </div>
+
+        <p>Add caching to your workflow to speed up runs:</p>
+
+        <pre><code class="language-yaml">    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pytest pytest-xdist
+    
+    - name: Run tests in parallel
+      run: pytest -n auto</code></pre>
+
+        <h3>Permission Errors</h3>
+
+        <div class="warning">
+            <p><strong>Problem:</strong> "Permission denied" when accessing files or databases</p>
+            <p><strong>Solution:</strong> CI runs in a fresh environment with limited permissions. Use relative paths, ensure files are in the repository, and avoid writing to system directories.</p>
+        </div>
+
+        <h3>Debugging Failed Workflows</h3>
+
+        <p>When a workflow fails, GitHub shows you the exact error. Click on the failed job to see logs. If you need more information:</p>
+
+        <pre><code class="language-yaml">    - name: Debug environment
+      run: |
+        echo "Python version:"
+        python --version
+        echo "Installed packages:"
+        pip list
+        echo "Environment variables:"
+        env
+        echo "File structure:"
+        ls -la</code></pre>
+
+        <p>Add this step temporarily to your workflow to see what's happening in the CI environment.</p>
+
+        <h2>Hands-On Exercise: Set Up Complete CI/CD Pipeline</h2>
+
+        <p>Now it's your turn! Set up a complete CI/CD pipeline for FlaskBlog Pro. This exercise consolidates everything you've learned in this chapter.</p>
+
+        <h3>Your Challenge</h3>
+
+        <p>Create a comprehensive CI/CD pipeline with:</p>
+
+        <ol>
+            <li>Pre-commit hooks that run smoke tests and linting</li>
+            <li>GitHub Actions workflow that tests Python 3.9, 3.10, 3.11, and 3.12</li>
+            <li>Database testing with both SQLite and PostgreSQL</li>
+            <li>Code coverage reporting with Codecov</li>
+            <li>Separate test suites (smoke, unit, integration, full)</li>
+            <li>Optimized workflows (fast smoke tests on push, comprehensive tests on PRs)</li>
+        </ol>
+
+        <h3>Step-by-Step Guide</h3>
+
+        <p><strong>Step 1: Set Up Pre-Commit Hooks</strong></p>
+
+        <ol>
+            <li>Install pre-commit: <code>pip install pre-commit</code></li>
+            <li>Create <code>.pre-commit-config.yaml</code> with hooks for:
+                <ul>
+                    <li>Trailing whitespace removal</li>
+                    <li>Black code formatting</li>
+                    <li>Flake8 linting</li>
+                    <li>Smoke tests (<code>pytest -m smoke</code>)</li>
+                </ul>
+            </li>
+            <li>Install hooks: <code>pre-commit install</code></li>
+            <li>Test by making a commit—hooks should run automatically</li>
+        </ol>
+
+        <p><strong>Step 2: Define Test Markers</strong></p>
+
+        <ol>
+            <li>Update <code>pytest.ini</code> with markers: smoke, unit, integration, slow, e2e</li>
+            <li>Mark at least 5 existing tests with appropriate markers</li>
+            <li>Verify you can run each suite: <code>pytest -m smoke</code>, <code>pytest -m unit</code>, etc.</li>
+        </ol>
+
+        <p><strong>Step 3: Create Basic GitHub Actions Workflow</strong></p>
+
+        <ol>
+            <li>Create <code>.github/workflows/tests.yml</code></li>
+            <li>Configure it to run on push to main/develop and PRs to main</li>
+            <li>Set up Python 3.11</li>
+            <li>Install dependencies and run pytest</li>
+            <li>Commit and push—verify the workflow runs in GitHub Actions</li>
+        </ol>
+
+        <p><strong>Step 4: Add Multi-Version Testing</strong></p>
+
+        <ol>
+            <li>Add matrix strategy for Python 3.9, 3.10, 3.11, 3.12</li>
+            <li>Push and verify all versions run</li>
+        </ol>
+
+        <p><strong>Step 5: Add PostgreSQL Testing</strong></p>
+
+        <ol>
+            <li>Add PostgreSQL service to your workflow</li>
+            <li>Create matrix for databases: sqlite and postgresql</li>
+            <li>Set DATABASE_URL environment variable appropriately</li>
+            <li>Update <code>config.py</code> to read DATABASE_URL</li>
+            <li>Install psycopg2-binary when database is postgresql</li>
+            <li>Push and verify tests run against both databases</li>
+        </ol>
+
+        <p><strong>Step 6: Set Up Code Coverage</strong></p>
+
+        <ol>
+            <li>Sign up for Codecov at <a href="https://codecov.io" target="_blank">codecov.io</a></li>
+            <li>Add CODECOV_TOKEN to GitHub repository secrets</li>
+            <li>Update workflow to generate XML coverage report</li>
+            <li>Add codecov action to upload coverage</li>
+            <li>Add coverage badge to README.md</li>
+        </ol>
+
+        <p><strong>Step 7: Create Optimized Workflows</strong></p>
+
+        <ol>
+            <li>Create <code>.github/workflows/smoke-tests.yml</code> for fast smoke tests on all pushes</li>
+            <li>Update main workflow to run only on PRs with comprehensive testing</li>
+            <li>Verify smoke tests run in ~1-2 minutes, full tests in ~10-15 minutes</li>
+        </ol>
+
+        <p><strong>Step 8: Test Your Pipeline</strong></p>
+
+        <ol>
+            <li>Create a feature branch: <code>git checkout -b test-ci-pipeline</code></li>
+            <li>Make a small change (add a comment to a file)</li>
+            <li>Commit—pre-commit hooks should run</li>
+            <li>Push—smoke tests should run</li>
+            <li>Open a PR—full test suite should run</li>
+            <li>Verify all tests pass and coverage is reported</li>
+        </ol>
+
+        <h3>Success Criteria</h3>
+
+        <p>Your CI/CD pipeline is complete when:</p>
+
+        <ul>
+            <li>Pre-commit hooks run automatically on every commit</li>
+            <li>Smoke tests run on every push to any branch (completing in < 2 minutes)</li>
+            <li>Full test suite runs on pull requests to main</li>
+            <li>Tests run successfully on Python 3.9, 3.10, 3.11, and 3.12</li>
+            <li>Tests run against both SQLite and PostgreSQL</li>
+            <li>Code coverage is measured and reported to Codecov</li>
+            <li>Coverage badge appears in README showing current coverage</li>
+            <li>Pull requests show test status (passing/failing) before merging</li>
+            <li>You can run <code>pytest -m smoke</code>, <code>pytest -m unit</code>, <code>pytest -m integration</code> locally</li>
+            <li>Workflows use caching for faster subsequent runs</li>
+        </ul>
+
+        <h3>Bonus Challenges</h3>
+
+        <p>If you want to go further:</p>
+
+        <ol>
+            <li>Add a <code>release.yml</code> workflow that runs on tags and deploys to staging</li>
+            <li>Set up tox for local multi-version testing matching your CI setup</li>
+            <li>Add a scheduled regression test suite that runs nightly</li>
+            <li>Implement parallel test execution with <code>pytest-xdist</code></li>
+            <li>Add a workflow that tests on Windows and macOS in addition to Linux</li>
+            <li>Configure different coverage thresholds for different test types</li>
+        </ol>
+
+        <h2>What We've Learned</h2>
+
+        <p>Take a moment to appreciate everything you've accomplished in this chapter:</p>
+
+        <ul>
+            <li>✓ You understand that continuous integration automates testing on every code change, catching problems before they reach production</li>
+            <li>✓ You can set up GitHub Actions workflows with appropriate triggers (push, pull_request, schedule)</li>
+            <li>✓ You know how to use matrix strategies to test multiple Python versions simultaneously</li>
+            <li>✓ You've learned to test against multiple databases (SQLite for speed, PostgreSQL for production accuracy)</li>
+            <li>✓ You can configure GitHub Actions services to run databases and other dependencies</li>
+            <li>✓ You understand how to integrate code coverage reporting with Codecov or Coveralls</li>
+            <li>✓ You know how to add coverage badges to your README for visibility</li>
+            <li>✓ You've mastered pre-commit hooks to catch issues before they're committed</li>
+            <li>✓ You can configure different test suites (smoke, unit, integration, regression) using pytest markers</li>
+            <li>✓ You understand the tradeoff between fast feedback (smoke tests) and comprehensive testing (full suite)</li>
+            <li>✓ You can optimize CI workflows with caching and parallel execution</li>
+            <li>✓ You know how to troubleshoot common CI issues like environment differences and permission errors</li>
+        </ul>
+
+        <p>Continuous integration transforms your test suite from a personal safety net into a team-wide quality gate. With CI, broken code can't reach the main branch, compatibility issues are caught immediately, and everyone sees consistent test results regardless of their local setup. The time you invest in setting up CI—usually a few hours—pays dividends every single day. You'll catch bugs before code review, ship with confidence knowing all tests passed on all platforms, and spend less time debugging "works on my machine" issues. As your team grows and your project matures, you'll appreciate having automated testing even more!</p>
+
+        <h2>Before You Continue...</h2>
+
+        <p>Before moving on to Chapter 14, make sure you:</p>
+
+        <ol>
+            <li>Understand what continuous integration is and why it prevents "works on my machine" problems</li>
+            <li>Can create GitHub Actions workflows with appropriate triggers for push and pull requests</li>
+            <li>Know how to use matrix strategies to test multiple Python versions simultaneously (e.g., 3.9-3.12)</li>
+            <li>Understand why testing against your production database (PostgreSQL) catches bugs that SQLite doesn't</li>
+            <li>Can configure GitHub Actions services to run PostgreSQL for integration tests</li>
+            <li>Know how to set environment variables (like DATABASE_URL) in workflows</li>
+            <li>Can integrate code coverage reporting with Codecov and add badges to README</li>
+            <li>Understand how to set up pre-commit hooks that run automatically on <code>git commit</code></li>
+            <li>Know the difference between running hooks for every commit vs delegating comprehensive testing to CI</li>
+            <li>Can define pytest markers (smoke, unit, integration, e2e) and run specific test suites</li>
+            <li>Understand when to use smoke tests (fast, on every push) vs full tests (comprehensive, on PRs)</li>
+            <li>Can optimize workflows with dependency caching and parallel test execution</li>
+            <li>Know how to troubleshoot common CI issues like missing dependencies and environment differences</li>
+            <li>Have completed the hands-on exercise: setting up a complete CI/CD pipeline for FlaskBlog Pro</li>
+        </ol>
+
+        <p>If something doesn't make complete sense yet, that's okay! CI/CD is one of those topics that becomes clearer with practice. The key insights are: (1) automate everything—don't rely on developers remembering to run tests, (2) test on multiple Python versions and databases to catch compatibility issues, (3) use fast smoke tests for quick feedback and comprehensive tests for pull requests, and (4) pre-commit hooks catch obvious issues immediately while CI handles thorough validation. Everything else builds on these foundations. You'll refine your CI/CD strategy as you work on more projects and discover what works best for your team!</p>
+
+        <div class="success">
+            <strong>Next Up:</strong> In Chapter 14, you're going to learn about testing advanced Flask features that haven't been covered yet. You'll discover how to test Flask-Mail for email verification and password reset workflows, test file uploads to cloud storage, test scheduled tasks with APScheduler, and test WebSocket connections with Flask-SocketIO. These are the features that make production applications powerful but can be tricky to test—you'll learn how to test them confidently! You've automated your test suite with CI/CD—now let's fill in the advanced testing gaps!
+        </div>
+
+        <div class="nav-links">
+            <a href="chapter12.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter14.html">Next Chapter →</a>
+        </div>
+
+        <footer>
+            <p>Flask Testing Mastery - A comprehensive course on testing Flask applications</p>
+            <p style="font-size: 0.9em;">Questions or feedback? Let me know!</p>
+        </footer>
+    </div>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+</body>
+</html>

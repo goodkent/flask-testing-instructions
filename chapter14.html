@@ -1,0 +1,1653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 14: Testing Advanced Flask Features - Flask Testing Mastery</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/prism.css">
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="chapter13.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter15.html">Next Chapter →</a>
+        </div>
+
+        <h1>Chapter 14: Testing Advanced Flask Features</h1>
+        <p class="chapter-subtitle">Testing email workflows, file uploads, scheduled tasks, and more</p>
+
+        <div class="github-links">
+            <span class="github-label">Chapter Code:</span>
+            <a href="https://github.com/goodkent/flask-testing/tree/ch14-end" class="github-link">Browse</a>
+            <a href="https://github.com/goodkent/flask-testing/archive/refs/tags/ch14-end.zip" class="github-link">Zip</a>
+            <a href="https://github.com/goodkent/flask-testing/compare/ch13-end...ch14-end" class="github-link">Diff</a>
+        </div>
+
+        <div class="intro-section">
+            <p>Welcome back! In Chapter 13, you automated your entire test suite with CI/CD, ensuring tests run automatically on every push and pull request. Your FlaskBlog Pro application now has a safety net that catches bugs before they reach production. But there's something I haven't shown you yet: how to test some of the most powerful features that production Flask applications need.</p>
+
+            <p>Think about it: when a user registers for your blog, how do you verify their email address? When they forget their password, how do they reset it? When they upload a profile picture, where does it go? These are fundamental features of production applications, but they're also some of the trickiest to test. Email verification requires generating secure tokens, sending emails, and validating those tokens later. File uploads might involve cloud storage services like AWS S3. And what about features that run on a schedule, like sending weekly digests?</p>
+
+            <p>In this chapter, I'm going to show you how to test all of these advanced features. You'll learn how to test Flask-Mail for email workflows, handle file uploads to cloud storage, test scheduled tasks with APScheduler, and even test WebSocket connections with Flask-SocketIO. These features make applications powerful but can feel intimidating to test. By the end of this chapter, you'll know exactly how to test them with confidence.</p>
+
+            <p>We're going to focus heavily on email testing because it's absolutely critical for production applications. Every blog platform needs user registration with email verification, password reset functionality, and often administrative features like user invitations. You'll learn patterns that apply to all token-based workflows, not just email verification. The techniques you learn here will transfer to testing API authentication, magic link logins, and any feature that requires secure, time-limited tokens.</p>
+        </div>
+
+        <h2>Learning Objectives</h2>
+
+        <ul>
+            <li>Test Flask-Mail configuration and email sending in development and production modes</li>
+            <li>Test token-based email verification workflows (user registration with confirmation)</li>
+            <li>Test password reset functionality with secure, time-limited tokens</li>
+            <li>Test user invitation systems where admins invite new users via email</li>
+            <li>Test magic link authentication for passwordless login</li>
+            <li>Test file uploads to AWS S3 and other cloud storage providers</li>
+            <li>Test scheduled tasks using APScheduler for background jobs</li>
+            <li>Test WebSocket connections with Flask-SocketIO for real-time features</li>
+            <li>Test streaming responses for large file downloads or server-sent events</li>
+            <li>Test custom middleware and comprehensive error handlers</li>
+        </ul>
+
+        <h2>Why Testing Email Is Critical (And Tricky)</h2>
+
+        <p>Before we dive into the code, let me tell you why email testing deserves special attention. In production applications, email is everywhere:</p>
+
+        <ul>
+            <li><strong>User registration:</strong> Send verification emails to confirm email addresses</li>
+            <li><strong>Password reset:</strong> Send secure tokens when users forget their passwords</li>
+            <li><strong>User invitations:</strong> Admins invite new users who create accounts via email links</li>
+            <li><strong>Notifications:</strong> Alert users about comments, mentions, or important events</li>
+            <li><strong>Transactional emails:</strong> Order confirmations, shipping updates, receipts</li>
+        </ul>
+
+        <p>Here's what makes email testing challenging: you can't just send real emails during tests! Imagine running your test suite and sending hundreds of emails to real addresses. That would be a disaster. Plus, how would you verify that the email was sent correctly? How would you test that the token in the email actually works? And what about emails that should only be sent in production but not in development?</p>
+
+        <p>The solution is to use Flask-Mail's testing mode, which captures emails instead of sending them. You can then inspect these captured emails to verify they contain the right content, the right recipients, and the right tokens. Let me show you how this works.</p>
+
+        <h2>Setting Up Flask-Mail for Testing</h2>
+
+        <p>First, let's add Flask-Mail to our FlaskBlog Pro application. If you haven't already installed it, do that now:</p>
+
+        <pre><code class="language-bash">pip install flask-mail
+</code></pre>
+
+        <p>Now, let's update our configuration to support email in both development and testing modes. Open <code>config.py</code> and add email configuration:</p>
+
+        <pre><code class="language-python"># config.py
+import os
+from datetime import timedelta
+
+class Config:
+    """Base configuration with common settings."""
+    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    
+    # Email configuration
+    MAIL_SERVER = os.environ.get('MAIL_SERVER') or 'smtp.gmail.com'
+    MAIL_PORT = int(os.environ.get('MAIL_PORT') or 587)
+    MAIL_USE_TLS = os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', 'on', '1']
+    MAIL_USERNAME = os.environ.get('MAIL_USERNAME')
+    MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD')
+    MAIL_DEFAULT_SENDER = os.environ.get('MAIL_DEFAULT_SENDER') or 'noreply@flaskblogpro.com'
+    
+    # Token expiration times
+    EMAIL_VERIFICATION_TOKEN_MAX_AGE = 3600  # 1 hour
+    PASSWORD_RESET_TOKEN_MAX_AGE = 3600  # 1 hour
+    INVITATION_TOKEN_MAX_AGE = 86400  # 24 hours
+
+class DevelopmentConfig(Config):
+    """Development configuration."""
+    DEBUG = True
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DEV_DATABASE_URL') or \
+        'sqlite:///dev_flaskblog.db'
+
+class TestingConfig(Config):
+    """Testing configuration."""
+    TESTING = True
+    SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+    WTF_CSRF_ENABLED = False
+    
+    # Email testing configuration - this is the key!
+    MAIL_SUPPRESS_SEND = True  # Don't actually send emails
+    MAIL_DEFAULT_SENDER = 'test@flaskblogpro.com'
+
+class ProductionConfig(Config):
+    """Production configuration."""
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
+        'sqlite:///flaskblog.db'
+
+config = {
+    'development': DevelopmentConfig,
+    'testing': TestingConfig,
+    'production': ProductionConfig,
+    'default': DevelopmentConfig
+}
+</code></pre>
+
+        <div class="note">
+            <strong>The Critical Setting:</strong> Notice <code>MAIL_SUPPRESS_SEND = True</code> in the testing configuration. This tells Flask-Mail to capture emails instead of sending them. You can then access these captured emails in your tests using <code>mail.outbox</code>. This is the foundation of all email testing!
+        </div>
+
+        <p>Now let's initialize Flask-Mail in our application factory. Open <code>app/__init__.py</code> and add the mail extension:</p>
+
+        <pre><code class="language-python"># app/__init__.py
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from flask_mail import Mail
+from config import config
+
+db = SQLAlchemy()
+mail = Mail()  # Create the mail instance
+
+def create_app(config_name='default'):
+    """Application factory function."""
+    app = Flask(__name__)
+    app.config.from_object(config[config_name])
+    
+    # Initialize extensions
+    db.init_app(app)
+    mail.init_app(app)  # Initialize Flask-Mail
+    
+    # Register blueprints
+    from app.main import bp as main_bp
+    app.register_blueprint(main_bp)
+    
+    from app.auth import bp as auth_bp
+    app.register_blueprint(auth_bp, url_prefix='/auth')
+    
+    with app.app_context():
+        db.create_all()
+    
+    return app
+</code></pre>
+
+        <h2>Testing Email Verification: The Complete Workflow</h2>
+
+        <p>Now we're ready to test our first email workflow: email verification during user registration. This is one of the most common features in web applications, and getting the testing right is crucial. The workflow has several steps:</p>
+
+        <ol>
+            <li>User submits registration form with email and password</li>
+            <li>Application creates user account but marks email as <strong>unverified</strong></li>
+            <li>Application generates a secure, time-limited token tied to the user's email</li>
+            <li>Application sends verification email containing a link with the token</li>
+            <li>User clicks the link, which includes the token in the URL</li>
+            <li>Application validates the token and marks the email as <strong>verified</strong></li>
+            <li>User can now access protected features requiring verified email</li>
+        </ol>
+
+        <p>That's a lot of moving parts! Let's build and test this step by step, starting with the token generation.</p>
+
+        <h3>Creating Secure Tokens with itsdangerous</h3>
+
+        <p>Flask comes with a library called <code>itsdangerous</code> that's perfect for generating secure, time-limited tokens. Let's create helper functions for token generation and validation. Create a new file <code>app/email_utils.py</code>:</p>
+
+        <pre><code class="language-python"># app/email_utils.py
+from flask import current_app, url_for
+from flask_mail import Message
+from itsdangerous import URLSafeTimedSerializer
+from app import mail
+
+def get_serializer():
+    """Get a URLSafeTimedSerializer for token generation."""
+    return URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
+
+def generate_email_verification_token(email):
+    """Generate a secure token for email verification."""
+    serializer = get_serializer()
+    return serializer.dumps(email, salt='email-verify-salt')
+
+def verify_email_verification_token(token, max_age=3600):
+    """
+    Verify an email verification token.
+    
+    Args:
+        token: The token to verify
+        max_age: Maximum age in seconds (default: 1 hour)
+        
+    Returns:
+        The email address if valid, None if invalid/expired
+    """
+    serializer = get_serializer()
+    try:
+        email = serializer.loads(
+            token,
+            salt='email-verify-salt',
+            max_age=max_age
+        )
+        return email
+    except Exception:
+        return None
+
+def send_verification_email(user):
+    """Send email verification email to a user."""
+    token = generate_email_verification_token(user.email)
+    verify_url = url_for('auth.verify_email', token=token, _external=True)
+    
+    msg = Message(
+        subject='Verify Your Email - FlaskBlog Pro',
+        recipients=[user.email],
+        body=f'''Hello {user.username},
+
+Thanks for registering with FlaskBlog Pro! Please verify your email address by clicking the link below:
+
+{verify_url}
+
+This link will expire in 1 hour.
+
+If you didn't create this account, you can safely ignore this email.
+
+Best regards,
+The FlaskBlog Pro Team
+''',
+        html=f'''
+        <h2>Welcome to FlaskBlog Pro, {user.username}!</h2>
+        <p>Thanks for registering! Please verify your email address by clicking the button below:</p>
+        <p><a href="{verify_url}" style="background-color: #4CAF50; color: white; padding: 14px 28px; text-decoration: none; display: inline-block; border-radius: 4px;">Verify Email</a></p>
+        <p>This link will expire in 1 hour.</p>
+        <p>If you didn't create this account, you can safely ignore this email.</p>
+        <p>Best regards,<br>The FlaskBlog Pro Team</p>
+        '''
+    )
+    
+    mail.send(msg)
+</code></pre>
+
+        <div class="note">
+            <strong>Why This Design?</strong> You might be wondering why we separate token generation from email sending. This makes testing much easier! You can test token generation independently of email sending. Plus, you can reuse the token logic for password reset, user invitations, and other workflows. Good separation of concerns makes testing simpler.
+        </div>
+
+        <h3>Testing Token Generation and Validation</h3>
+
+        <p>Before we test the full email workflow, let's test token generation and validation in isolation. Create <code>tests/test_email_tokens.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_email_tokens.py
+import pytest
+import time
+from app.email_utils import (
+    generate_email_verification_token,
+    verify_email_verification_token
+)
+
+def test_generate_email_token(app):
+    """Test generating an email verification token."""
+    with app.app_context():
+        email = 'test@example.com'
+        token = generate_email_verification_token(email)
+        
+        # Token should be a non-empty string
+        assert isinstance(token, str)
+        assert len(token) > 0
+        
+        # Token should be different each time (contains timestamp)
+        token2 = generate_email_verification_token(email)
+        assert token != token2
+
+def test_verify_valid_token(app):
+    """Test verifying a valid token."""
+    with app.app_context():
+        email = 'alice@example.com'
+        token = generate_email_verification_token(email)
+        
+        # Verify the token
+        verified_email = verify_email_verification_token(token)
+        assert verified_email == email
+
+def test_verify_invalid_token(app):
+    """Test that invalid tokens are rejected."""
+    with app.app_context():
+        # Completely invalid token
+        result = verify_email_verification_token('invalid-token-12345')
+        assert result is None
+
+def test_verify_tampered_token(app):
+    """Test that tampered tokens are rejected."""
+    with app.app_context():
+        email = 'bob@example.com'
+        token = generate_email_verification_token(email)
+        
+        # Tamper with the token
+        tampered_token = token[:-5] + 'xxxxx'
+        result = verify_email_verification_token(tampered_token)
+        assert result is None
+
+def test_verify_expired_token(app):
+    """Test that expired tokens are rejected."""
+    with app.app_context():
+        email = 'charlie@example.com'
+        token = generate_email_verification_token(email)
+        
+        # Verify with max_age of 0 seconds (token is immediately expired)
+        result = verify_email_verification_token(token, max_age=0)
+        assert result is None
+
+def test_verify_token_different_salt(app):
+    """Test that tokens with different salts don't validate."""
+    with app.app_context():
+        from itsdangerous import URLSafeTimedSerializer
+        
+        email = 'dave@example.com'
+        serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
+        
+        # Generate token with different salt
+        wrong_salt_token = serializer.dumps(email, salt='wrong-salt')
+        
+        # Should not verify with email-verify-salt
+        result = verify_email_verification_token(wrong_salt_token)
+        assert result is None
+</code></pre>
+
+        <p>Let's run these tests to make sure token generation and validation work correctly:</p>
+
+        <pre><code class="language-bash">pytest tests/test_email_tokens.py -v
+</code></pre>
+
+        <p>You should see output like:</p>
+
+        <pre><code class="language-bash">tests/test_email_tokens.py::test_generate_email_token PASSED
+tests/test_email_tokens.py::test_verify_valid_token PASSED
+tests/test_email_tokens.py::test_verify_invalid_token PASSED
+tests/test_email_tokens.py::test_verify_tampered_token PASSED
+tests/test_email_tokens.py::test_verify_expired_token PASSED
+tests/test_email_tokens.py::test_verify_token_different_salt PASSED
+
+============================== 6 passed in 0.15s ===============================
+</code></pre>
+
+        <div class="note">
+            <strong>Test Coverage Analysis:</strong> Notice how we test multiple failure scenarios—invalid tokens, tampered tokens, expired tokens, and wrong salt. This comprehensive testing gives us confidence that our security measures work. When it comes to authentication and security features, you can never have too many tests!
+        </div>
+
+        <h3>Testing Email Sending with mail.outbox</h3>
+
+        <p>Now let's test the actual email sending. Remember, in testing mode, emails are captured in <code>mail.outbox</code> instead of being sent. Create <code>tests/test_email_sending.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_email_sending.py
+import pytest
+from flask import url_for
+from app import mail
+from app.models import User
+from app.email_utils import send_verification_email
+
+@pytest.fixture
+def user(app):
+    """Create a test user."""
+    from app import db
+    
+    with app.app_context():
+        user = User(username='testuser', email='test@example.com')
+        user.set_password('password123')
+        db.session.add(user)
+        db.session.commit()
+        
+        # Refresh to get id
+        db.session.refresh(user)
+        yield user
+
+def test_send_verification_email(app, user):
+    """Test sending a verification email."""
+    with app.app_context():
+        # Clear mail outbox before test
+        with mail.record_messages() as outbox:
+            send_verification_email(user)
+            
+            # Check that exactly one email was sent
+            assert len(outbox) == 1
+            
+            # Check email properties
+            msg = outbox[0]
+            assert msg.subject == 'Verify Your Email - FlaskBlog Pro'
+            assert msg.recipients == ['test@example.com']
+            assert msg.sender == 'test@flaskblogpro.com'
+
+def test_verification_email_content(app, user):
+    """Test that verification email contains required elements."""
+    with app.app_context():
+        with mail.record_messages() as outbox:
+            send_verification_email(user)
+            
+            msg = outbox[0]
+            
+            # Check body contains username and verification link
+            assert 'testuser' in msg.body
+            assert 'verify' in msg.body.lower()
+            assert 'http' in msg.body  # Should contain a URL
+            
+            # Check HTML version
+            assert msg.html is not None
+            assert 'testuser' in msg.html
+            assert 'Verify Email' in msg.html
+
+def test_verification_email_contains_valid_token(app, user):
+    """Test that the verification email contains a valid token."""
+    with app.app_context():
+        with mail.record_messages() as outbox:
+            send_verification_email(user)
+            
+            msg = outbox[0]
+            
+            # Extract the URL from the email body
+            lines = msg.body.split('\n')
+            url_line = [line for line in lines if line.startswith('http')][0]
+            
+            # Extract token from URL (format: http://localhost/auth/verify_email?token=...)
+            assert 'token=' in url_line
+            token = url_line.split('token=')[1].strip()
+            
+            # Verify the token is valid
+            from app.email_utils import verify_email_verification_token
+            verified_email = verify_email_verification_token(token)
+            assert verified_email == user.email
+
+def test_multiple_emails_different_tokens(app, user):
+    """Test that multiple verification emails get different tokens."""
+    with app.app_context():
+        with mail.record_messages() as outbox:
+            # Send two verification emails
+            send_verification_email(user)
+            send_verification_email(user)
+            
+            assert len(outbox) == 2
+            
+            # Extract tokens from both emails
+            token1 = outbox[0].body.split('token=')[1].split('\n')[0].strip()
+            token2 = outbox[1].body.split('token=')[1].split('\n')[0].strip()
+            
+            # Tokens should be different (they include timestamps)
+            assert token1 != token2
+            
+            # But both should verify to the same email
+            from app.email_utils import verify_email_verification_token
+            assert verify_email_verification_token(token1) == user.email
+            assert verify_email_verification_token(token2) == user.email
+</code></pre>
+
+        <p>Run these tests:</p>
+
+        <pre><code class="language-bash">pytest tests/test_email_sending.py -v
+</code></pre>
+
+        <div class="note">
+            <strong>The Power of mail.record_messages():</strong> This context manager captures emails sent during the test. It's better than directly checking <code>mail.outbox</code> because it automatically clears between tests. Always use <code>with mail.record_messages() as outbox:</code> for email tests!
+        </div>
+
+        <h3>Testing the Complete Email Verification Workflow</h3>
+
+        <p>Now let's test the entire workflow from registration to email verification. First, we need to update our User model to track email verification status. Update <code>app/models.py</code>:</p>
+
+        <pre><code class="language-python"># app/models.py (add this field to User model)
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128))
+    email_verified = db.Column(db.Boolean, default=False)  # Add this field
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # ... rest of the model
+</code></pre>
+
+        <p>Now let's add the verification route to our auth blueprint. Update <code>app/auth/routes.py</code>:</p>
+
+        <pre><code class="language-python"># app/auth/routes.py
+from flask import render_template, redirect, url_for, flash, request
+from app.auth import bp
+from app.models import User
+from app import db
+from app.email_utils import (
+    send_verification_email,
+    verify_email_verification_token
+)
+
+@bp.route('/verify_email')
+def verify_email():
+    """Verify user's email using token from URL."""
+    token = request.args.get('token')
+    
+    if not token:
+        flash('Invalid verification link.', 'error')
+        return redirect(url_for('main.index'))
+    
+    # Verify the token
+    email = verify_email_verification_token(token)
+    
+    if email is None:
+        flash('Verification link is invalid or has expired.', 'error')
+        return redirect(url_for('main.index'))
+    
+    # Find user with this email
+    user = User.query.filter_by(email=email).first()
+    
+    if user is None:
+        flash('User not found.', 'error')
+        return redirect(url_for('main.index'))
+    
+    if user.email_verified:
+        flash('Email already verified.', 'info')
+        return redirect(url_for('main.index'))
+    
+    # Mark email as verified
+    user.email_verified = True
+    db.session.commit()
+    
+    flash('Email verified successfully! You can now access all features.', 'success')
+    return redirect(url_for('main.index'))
+
+@bp.route('/register', methods=['GET', 'POST'])
+def register():
+    """User registration with email verification."""
+    if request.method == 'POST':
+        username = request.form.get('username')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        
+        # Create user (email_verified defaults to False)
+        user = User(username=username, email=email)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.commit()
+        
+        # Send verification email
+        send_verification_email(user)
+        
+        flash('Registration successful! Please check your email to verify your account.', 'success')
+        return redirect(url_for('main.index'))
+    
+    return render_template('auth/register.html')
+</code></pre>
+
+        <p>Now we can test the complete workflow! Create <code>tests/test_email_verification_workflow.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_email_verification_workflow.py
+import pytest
+from app import db, mail
+from app.models import User
+from app.email_utils import generate_email_verification_token
+
+def test_registration_sends_verification_email(client):
+    """Test that user registration sends a verification email."""
+    with mail.record_messages() as outbox:
+        response = client.post('/auth/register', data={
+            'username': 'newuser',
+            'email': 'newuser@example.com',
+            'password': 'SecurePass123'
+        }, follow_redirects=True)
+        
+        assert response.status_code == 200
+        assert b'Please check your email' in response.data
+        
+        # Check email was sent
+        assert len(outbox) == 1
+        msg = outbox[0]
+        assert msg.recipients == ['newuser@example.com']
+        assert 'Verify Your Email' in msg.subject
+
+def test_new_user_email_not_verified(client):
+    """Test that newly registered users have unverified email."""
+    client.post('/auth/register', data={
+        'username': 'testuser',
+        'email': 'test@example.com',
+        'password': 'password123'
+    })
+    
+    user = User.query.filter_by(username='testuser').first()
+    assert user is not None
+    assert user.email_verified is False
+
+def test_email_verification_success(client, app):
+    """Test successful email verification."""
+    # Create unverified user
+    with app.app_context():
+        user = User(username='unverified', email='unverified@example.com')
+        user.set_password('password')
+        user.email_verified = False
+        db.session.add(user)
+        db.session.commit()
+        
+        # Generate token
+        token = generate_email_verification_token('unverified@example.com')
+    
+    # Verify email using token
+    response = client.get(f'/auth/verify_email?token={token}', follow_redirects=True)
+    
+    assert response.status_code == 200
+    assert b'Email verified successfully' in response.data
+    
+    # Check that user's email is now verified
+    with app.app_context():
+        user = User.query.filter_by(email='unverified@example.com').first()
+        assert user.email_verified is True
+
+def test_email_verification_invalid_token(client):
+    """Test email verification with invalid token."""
+    response = client.get('/auth/verify_email?token=invalid-token-xyz', follow_redirects=True)
+    
+    assert response.status_code == 200
+    assert b'invalid or has expired' in response.data
+
+def test_email_verification_no_token(client):
+    """Test email verification without token."""
+    response = client.get('/auth/verify_email', follow_redirects=True)
+    
+    assert response.status_code == 200
+    assert b'Invalid verification link' in response.data
+
+def test_email_verification_already_verified(client, app):
+    """Test verifying an already verified email."""
+    with app.app_context():
+        # Create user with already verified email
+        user = User(username='verified', email='verified@example.com')
+        user.set_password('password')
+        user.email_verified = True  # Already verified
+        db.session.add(user)
+        db.session.commit()
+        
+        token = generate_email_verification_token('verified@example.com')
+    
+    response = client.get(f'/auth/verify_email?token={token}', follow_redirects=True)
+    
+    assert response.status_code == 200
+    assert b'already verified' in response.data
+</code></pre>
+
+        <p>Run the complete workflow tests:</p>
+
+        <pre><code class="language-bash">pytest tests/test_email_verification_workflow.py -v
+</code></pre>
+
+        <p>Congratulations! You now have complete test coverage for email verification. This pattern—generate token, send email, verify token—will work for any email-based workflow. Let me show you how to apply it to password reset.</p>
+
+        <h2>Testing Password Reset Workflows</h2>
+
+        <p>Password reset is similar to email verification but with an important difference: instead of marking a field as verified, you're allowing the user to set a new password. The workflow is:</p>
+
+        <ol>
+            <li>User requests password reset (provides their email)</li>
+            <li>Application sends email with password reset link containing a token</li>
+            <li>User clicks link and is shown a form to enter new password</li>
+            <li>User submits new password along with the token</li>
+            <li>Application verifies token and updates password</li>
+        </ol>
+
+        <p>Let's add password reset functions to our <code>email_utils.py</code>:</p>
+
+        <pre><code class="language-python"># app/email_utils.py (add these functions)
+
+def generate_password_reset_token(email):
+    """Generate a secure token for password reset."""
+    serializer = get_serializer()
+    return serializer.dumps(email, salt='password-reset-salt')
+
+def verify_password_reset_token(token, max_age=3600):
+    """
+    Verify a password reset token.
+    
+    Args:
+        token: The token to verify
+        max_age: Maximum age in seconds (default: 1 hour)
+        
+    Returns:
+        The email address if valid, None if invalid/expired
+    """
+    serializer = get_serializer()
+    try:
+        email = serializer.loads(
+            token,
+            salt='password-reset-salt',
+            max_age=max_age
+        )
+        return email
+    except Exception:
+        return None
+
+def send_password_reset_email(user):
+    """Send password reset email to a user."""
+    token = generate_password_reset_token(user.email)
+    reset_url = url_for('auth.reset_password', token=token, _external=True)
+    
+    msg = Message(
+        subject='Reset Your Password - FlaskBlog Pro',
+        recipients=[user.email],
+        body=f'''Hello {user.username},
+
+You requested a password reset for your FlaskBlog Pro account. Click the link below to reset your password:
+
+{reset_url}
+
+This link will expire in 1 hour.
+
+If you didn't request this password reset, you can safely ignore this email. Your password will not be changed.
+
+Best regards,
+The FlaskBlog Pro Team
+''',
+        html=f'''
+        <h2>Password Reset Request</h2>
+        <p>Hello {user.username},</p>
+        <p>You requested a password reset for your FlaskBlog Pro account. Click the button below to reset your password:</p>
+        <p><a href="{reset_url}" style="background-color: #4CAF50; color: white; padding: 14px 28px; text-decoration: none; display: inline-block; border-radius: 4px;">Reset Password</a></p>
+        <p>This link will expire in 1 hour.</p>
+        <p>If you didn't request this password reset, you can safely ignore this email. Your password will not be changed.</p>
+        <p>Best regards,<br>The FlaskBlog Pro Team</p>
+        '''
+    )
+    
+    mail.send(msg)
+</code></pre>
+
+        <h3>Testing Password Reset Token Generation</h3>
+
+        <p>Just like with email verification, let's test token generation first. Add to <code>tests/test_email_tokens.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_email_tokens.py (add these tests)
+from app.email_utils import (
+    generate_password_reset_token,
+    verify_password_reset_token
+)
+
+def test_generate_password_reset_token(app):
+    """Test generating a password reset token."""
+    with app.app_context():
+        email = 'user@example.com'
+        token = generate_password_reset_token(email)
+        
+        assert isinstance(token, str)
+        assert len(token) > 0
+
+def test_verify_password_reset_token(app):
+    """Test verifying a valid password reset token."""
+    with app.app_context():
+        email = 'reset@example.com'
+        token = generate_password_reset_token(email)
+        
+        verified_email = verify_password_reset_token(token)
+        assert verified_email == email
+
+def test_password_reset_token_different_salt(app):
+    """Test that email verification tokens don't work for password reset."""
+    with app.app_context():
+        from app.email_utils import generate_email_verification_token
+        
+        email = 'test@example.com'
+        
+        # Generate email verification token
+        verify_token = generate_email_verification_token(email)
+        
+        # Try to use it as password reset token
+        result = verify_password_reset_token(verify_token)
+        assert result is None  # Should fail because salt is different
+</code></pre>
+
+        <div class="note">
+            <strong>Security Through Salt:</strong> Notice the last test. Different salts mean tokens from one workflow can't be used in another. An email verification token won't work for password reset, even though both are tied to the same email address. This is a critical security feature!
+        </div>
+
+        <h3>Testing Password Reset Email and Workflow</h3>
+
+        <p>Now let's test the complete password reset workflow. First, add the routes to <code>app/auth/routes.py</code>:</p>
+
+        <pre><code class="language-python"># app/auth/routes.py (add these routes)
+from app.email_utils import (
+    send_password_reset_email,
+    verify_password_reset_token
+)
+
+@bp.route('/forgot_password', methods=['GET', 'POST'])
+def forgot_password():
+    """Request password reset email."""
+    if request.method == 'POST':
+        email = request.form.get('email')
+        user = User.query.filter_by(email=email).first()
+        
+        if user:
+            send_password_reset_email(user)
+        
+        # Always show success message (don't reveal if email exists)
+        flash('If that email exists, we sent password reset instructions.', 'info')
+        return redirect(url_for('main.index'))
+    
+    return render_template('auth/forgot_password.html')
+
+@bp.route('/reset_password', methods=['GET', 'POST'])
+def reset_password():
+    """Reset password using token."""
+    token = request.args.get('token')
+    
+    if not token:
+        flash('Invalid password reset link.', 'error')
+        return redirect(url_for('main.index'))
+    
+    if request.method == 'POST':
+        # Verify token
+        email = verify_password_reset_token(token)
+        
+        if email is None:
+            flash('Password reset link is invalid or has expired.', 'error')
+            return redirect(url_for('main.index'))
+        
+        # Find user
+        user = User.query.filter_by(email=email).first()
+        if user is None:
+            flash('User not found.', 'error')
+            return redirect(url_for('main.index'))
+        
+        # Update password
+        new_password = request.form.get('password')
+        user.set_password(new_password)
+        db.session.commit()
+        
+        flash('Password reset successfully! You can now log in with your new password.', 'success')
+        return redirect(url_for('auth.login'))
+    
+    # GET request - verify token and show form
+    email = verify_password_reset_token(token)
+    if email is None:
+        flash('Password reset link is invalid or has expired.', 'error')
+        return redirect(url_for('main.index'))
+    
+    return render_template('auth/reset_password.html', token=token)
+</code></pre>
+
+        <p>Now create comprehensive tests in <code>tests/test_password_reset.py</code>:</p>
+
+        <pre><code class="language-python"># tests/test_password_reset.py
+import pytest
+from app import db, mail
+from app.models import User
+from app.email_utils import generate_password_reset_token
+
+@pytest.fixture
+def user(app):
+    """Create a test user."""
+    with app.app_context():
+        user = User(username='resetuser', email='reset@example.com')
+        user.set_password('OldPassword123')
+        db.session.add(user)
+        db.session.commit()
+        db.session.refresh(user)
+        yield user
+
+def test_forgot_password_sends_email(client, user):
+    """Test that forgot password form sends email."""
+    with mail.record_messages() as outbox:
+        response = client.post('/auth/forgot_password', data={
+            'email': 'reset@example.com'
+        }, follow_redirects=True)
+        
+        assert response.status_code == 200
+        assert b'sent password reset instructions' in response.data
+        
+        # Check email was sent
+        assert len(outbox) == 1
+        msg = outbox[0]
+        assert msg.recipients == ['reset@example.com']
+        assert 'Reset Your Password' in msg.subject
+
+def test_forgot_password_nonexistent_email(client):
+    """Test forgot password with non-existent email."""
+    with mail.record_messages() as outbox:
+        response = client.post('/auth/forgot_password', data={
+            'email': 'nonexistent@example.com'
+        }, follow_redirects=True)
+        
+        # Should still show success (don't reveal email doesn't exist)
+        assert response.status_code == 200
+        assert b'sent password reset instructions' in response.data
+        
+        # But no email should be sent
+        assert len(outbox) == 0
+
+def test_reset_password_success(client, app, user):
+    """Test successful password reset."""
+    with app.app_context():
+        token = generate_password_reset_token('reset@example.com')
+    
+    # Submit new password
+    response = client.post(f'/auth/reset_password?token={token}', data={
+        'password': 'NewPassword456'
+    }, follow_redirects=True)
+    
+    assert response.status_code == 200
+    assert b'Password reset successfully' in response.data
+    
+    # Verify password was changed
+    with app.app_context():
+        user = User.query.filter_by(email='reset@example.com').first()
+        assert user.check_password('NewPassword456')
+        assert not user.check_password('OldPassword123')
+
+def test_reset_password_invalid_token(client):
+    """Test password reset with invalid token."""
+    response = client.post('/auth/reset_password?token=invalid-token', data={
+        'password': 'NewPassword'
+    }, follow_redirects=True)
+    
+    assert response.status_code == 200
+    assert b'invalid or has expired' in response.data
+
+def test_reset_password_expired_token(client, app, user):
+    """Test password reset with expired token."""
+    with app.app_context():
+        from app.email_utils import generate_password_reset_token
+        token = generate_password_reset_token('reset@example.com')
+        
+        # Try to use token with max_age=0 (immediately expired)
+        from app.email_utils import verify_password_reset_token
+        result = verify_password_reset_token(token, max_age=0)
+        assert result is None
+
+def test_reset_password_get_with_valid_token(client, app, user):
+    """Test GET request to reset password page with valid token."""
+    with app.app_context():
+        token = generate_password_reset_token('reset@example.com')
+    
+    response = client.get(f'/auth/reset_password?token={token}')
+    
+    assert response.status_code == 200
+    # Should show password reset form (check for form elements)
+    assert b'password' in response.data.lower()
+
+def test_password_reset_email_content(client, app, user):
+    """Test that password reset email contains required elements."""
+    with app.app_context():
+        with mail.record_messages() as outbox:
+            from app.email_utils import send_password_reset_email
+            send_password_reset_email(user)
+            
+            msg = outbox[0]
+            
+            # Check email content
+            assert 'resetuser' in msg.body
+            assert 'reset' in msg.body.lower()
+            assert 'http' in msg.body
+            
+            # Extract token from email
+            token_line = [line for line in msg.body.split('\n') 
+                         if 'http' in line][0]
+            assert 'token=' in token_line
+            
+            # Token should be valid
+            token = token_line.split('token=')[1].strip()
+            from app.email_utils import verify_password_reset_token
+            assert verify_password_reset_token(token) == user.email
+</code></pre>
+
+        <p>Run the password reset tests:</p>
+
+        <pre><code class="language-bash">pytest tests/test_password_reset.py -v
+</code></pre>
+
+        <div class="note">
+            <strong>Security Best Practice:</strong> Notice in the <code>forgot_password</code> route, we always show the same success message whether the email exists or not. This prevents attackers from using the password reset form to discover which email addresses are registered in your system. Always do this in production!
+        </div>
+
+        <h2>Testing User Invitations and Magic Links</h2>
+
+        <p>Now that you understand the email verification and password reset patterns, you can apply the same approach to other token-based workflows. Let me quickly show you two more common patterns: user invitations and magic link authentication.</p>
+
+        <h3>User Invitations</h3>
+
+        <p>User invitations let administrators invite people to join your platform. The workflow is similar but with one key difference: the user doesn't exist yet when the invitation is sent. Here's a minimal test example:</p>
+
+        <pre><code class="language-python"># tests/test_user_invitations.py
+import pytest
+from app import db, mail
+from app.models import User
+
+def test_admin_can_invite_user(client, app, admin_user):
+    """Test that admin can send invitation email."""
+    with mail.record_messages() as outbox:
+        response = client.post('/admin/invite_user', data={
+            'email': 'newuser@example.com'
+        }, follow_redirects=True)
+        
+        assert response.status_code == 200
+        
+        # Check invitation email was sent
+        assert len(outbox) == 1
+        msg = outbox[0]
+        assert msg.recipients == ['newuser@example.com']
+        assert 'invited' in msg.body.lower()
+        
+        # Email should contain registration link with token
+        assert 'token=' in msg.body
+
+def test_invitation_token_creates_account(client, app):
+    """Test that invitation token allows account creation."""
+    with app.app_context():
+        # Generate invitation token for email
+        from app.email_utils import generate_invitation_token
+        token = generate_invitation_token('invited@example.com')
+    
+    # User accepts invitation and creates account
+    response = client.post(f'/auth/accept_invitation?token={token}', data={
+        'username': 'inviteduser',
+        'password': 'SecurePass123'
+    }, follow_redirects=True)
+    
+    assert response.status_code == 200
+    
+    # User should be created and email auto-verified
+    with app.app_context():
+        user = User.query.filter_by(email='invited@example.com').first()
+        assert user is not None
+        assert user.username == 'inviteduser'
+        assert user.email_verified is True  # Auto-verified!
+</code></pre>
+
+        <h3>Magic Link Authentication</h3>
+
+        <p>Magic links let users log in without a password by sending a login link to their email. This is useful for applications where you want to reduce password fatigue. The test pattern is the same:</p>
+
+        <pre><code class="language-python"># tests/test_magic_link.py
+import pytest
+from app import mail
+
+def test_request_magic_link(client, user):
+    """Test requesting a magic link login."""
+    with mail.record_messages() as outbox:
+        response = client.post('/auth/magic_link', data={
+            'email': 'user@example.com'
+        }, follow_redirects=True)
+        
+        assert len(outbox) == 1
+        msg = outbox[0]
+        assert 'login link' in msg.body.lower()
+
+def test_magic_link_logs_in_user(client, app):
+    """Test that magic link token logs in user."""
+    with app.app_context():
+        from app.email_utils import generate_magic_link_token
+        token = generate_magic_link_token('user@example.com')
+    
+    # Click magic link
+    response = client.get(f'/auth/magic_login?token={token}', 
+                         follow_redirects=True)
+    
+    assert response.status_code == 200
+    assert b'logged in' in response.data.lower()
+    
+    # User should be logged in (check session)
+    with client.session_transaction() as session:
+        assert 'user_id' in session
+</code></pre>
+
+        <p>As you can see, all token-based email workflows follow the same pattern: generate secure token, send email, verify token, take action. Once you understand this pattern, you can test any email-based feature!</p>
+
+        <h2>Testing File Uploads to Cloud Storage</h2>
+
+        <p>Another advanced feature that's tricky to test is file uploads to cloud storage like AWS S3. You don't want tests uploading actual files to S3—that's slow, costs money, and requires credentials. Instead, you mock the S3 client. Let me show you how.</p>
+
+        <p>First, install boto3 for AWS S3 integration:</p>
+
+        <pre><code class="language-bash">pip install boto3 moto
+</code></pre>
+
+        <p><code>moto</code> is a library that mocks AWS services perfectly for testing. Here's how to test file uploads:</p>
+
+        <pre><code class="language-python"># tests/test_file_upload.py
+import pytest
+from moto import mock_aws
+import boto3
+from io import BytesIO
+
+@pytest.fixture
+def s3_client():
+    """Create a mock S3 client for testing."""
+    with mock_aws():
+        # Create mock S3 service
+        s3 = boto3.client('s3', region_name='us-east-1')
+        
+        # Create test bucket
+        s3.create_bucket(Bucket='test-bucket')
+        
+        yield s3
+
+def test_upload_profile_picture(client, s3_client, user):
+    """Test uploading a profile picture to S3."""
+    # Create fake image file
+    data = {
+        'file': (BytesIO(b'fake image data'), 'profile.jpg')
+    }
+    
+    response = client.post(
+        '/user/upload_profile_picture',
+        data=data,
+        content_type='multipart/form-data',
+        follow_redirects=True
+    )
+    
+    assert response.status_code == 200
+    assert b'Profile picture updated' in response.data
+    
+    # Verify file was uploaded to S3
+    objects = s3_client.list_objects_v2(Bucket='test-bucket')
+    assert objects['KeyCount'] == 1
+    assert 'profile.jpg' in objects['Contents'][0]['Key']
+
+def test_upload_file_type_validation(client, user):
+    """Test that only allowed file types can be uploaded."""
+    # Try uploading a non-image file
+    data = {
+        'file': (BytesIO(b'not an image'), 'malicious.exe')
+    }
+    
+    response = client.post(
+        '/user/upload_profile_picture',
+        data=data,
+        content_type='multipart/form-data'
+    )
+    
+    assert response.status_code == 400
+    assert b'Invalid file type' in response.data
+
+def test_upload_file_size_limit(client, user):
+    """Test file size limits are enforced."""
+    # Create file larger than allowed size (e.g., 5MB)
+    large_file = BytesIO(b'x' * (6 * 1024 * 1024))  # 6MB
+    
+    data = {
+        'file': (large_file, 'huge.jpg')
+    }
+    
+    response = client.post(
+        '/user/upload_profile_picture',
+        data=data,
+        content_type='multipart/form-data'
+    )
+    
+    assert response.status_code == 400
+    assert b'File too large' in response.data
+
+def test_download_uploaded_file(client, s3_client, user):
+    """Test downloading a file from S3."""
+    # First upload a file
+    s3_client.put_object(
+        Bucket='test-bucket',
+        Key='uploads/test-file.pdf',
+        Body=b'PDF content here'
+    )
+    
+    # Download it
+    response = client.get('/files/download/test-file.pdf')
+    
+    assert response.status_code == 200
+    assert response.data == b'PDF content here'
+    assert response.headers['Content-Type'] == 'application/pdf'
+</code></pre>
+
+        <div class="note">
+            <strong>Why Moto?</strong> The <code>moto</code> library creates a fake AWS environment that behaves exactly like the real thing. Your code uses boto3 normally, but all requests go to the mock instead of AWS. This makes tests fast, free, and doesn't require AWS credentials!
+        </div>
+
+        <h2>Testing Scheduled Tasks with APScheduler</h2>
+
+        <p>Many applications need background jobs that run on a schedule—sending daily email digests, cleaning up old data, generating reports. APScheduler is a popular choice for this in Flask. Here's how to test scheduled tasks:</p>
+
+        <pre><code class="language-python"># tests/test_scheduled_tasks.py
+import pytest
+from datetime import datetime, timedelta
+from app import db
+from app.models import User, Post
+from app.tasks import send_daily_digest, cleanup_old_posts
+
+def test_daily_digest_sends_email(app, mail):
+    """Test that daily digest task sends emails."""
+    with app.app_context():
+        # Create users who should receive digest
+        user1 = User(username='user1', email='user1@example.com', 
+                    email_verified=True, receive_digest=True)
+        user2 = User(username='user2', email='user2@example.com',
+                    email_verified=True, receive_digest=True)
+        db.session.add_all([user1, user2])
+        
+        # Create some posts from yesterday
+        yesterday = datetime.utcnow() - timedelta(days=1)
+        post = Post(title='Test Post', content='Content', 
+                   created_at=yesterday)
+        db.session.add(post)
+        db.session.commit()
+        
+        # Run the task
+        with mail.record_messages() as outbox:
+            send_daily_digest()
+            
+            # Should send to users who opted in
+            assert len(outbox) == 2
+            recipients = {msg.recipients[0] for msg in outbox}
+            assert 'user1@example.com' in recipients
+            assert 'user2@example.com' in recipients
+
+def test_cleanup_task_deletes_old_posts(app):
+    """Test that cleanup task removes old posts."""
+    with app.app_context():
+        # Create old posts (over 30 days)
+        old_date = datetime.utcnow() - timedelta(days=31)
+        old_post = Post(title='Old Post', content='Should be deleted',
+                       created_at=old_date, is_draft=True)
+        
+        # Create recent post
+        recent_post = Post(title='Recent', content='Should stay',
+                          created_at=datetime.utcnow(), is_draft=True)
+        
+        db.session.add_all([old_post, recent_post])
+        db.session.commit()
+        
+        # Run cleanup task
+        cleanup_old_posts(days=30)
+        
+        # Old post should be deleted
+        assert Post.query.filter_by(title='Old Post').first() is None
+        
+        # Recent post should remain
+        assert Post.query.filter_by(title='Recent').first() is not None
+
+def test_scheduled_task_error_handling(app, mail):
+    """Test that scheduled tasks handle errors gracefully."""
+    with app.app_context():
+        # Simulate error condition (e.g., database unavailable)
+        with pytest.raises(Exception):
+            # Task should raise exception but not crash app
+            send_daily_digest(force_error=True)
+        
+        # Task should log error and continue
+        # (Check logs or error monitoring in production)
+</code></pre>
+
+        <div class="note">
+            <strong>Testing Strategy for Scheduled Tasks:</strong> Instead of testing the schedule itself (that's APScheduler's job), focus on testing the task functions directly. Call them manually in tests to verify they do what they're supposed to do. In production, you'll verify scheduling through monitoring and logs.
+        </div>
+
+        <h2>Testing WebSockets with Flask-SocketIO</h2>
+
+        <p>WebSockets enable real-time, bidirectional communication between the server and clients. Flask-SocketIO makes it easy to add WebSocket support to Flask applications. Testing WebSockets requires a special test client. Here's how:</p>
+
+        <pre><code class="language-python"># tests/test_websockets.py
+import pytest
+from app import create_app, socketio
+from flask_socketio import SocketIOTestClient
+
+@pytest.fixture
+def socketio_client(app):
+    """Create a SocketIO test client."""
+    return socketio.test_client(app, flask_test_client=app.test_client())
+
+def test_connect_to_websocket(socketio_client):
+    """Test client can connect to WebSocket."""
+    assert socketio_client.is_connected()
+
+def test_receive_message(socketio_client):
+    """Test receiving a message via WebSocket."""
+    # Emit a message from client
+    socketio_client.emit('message', {'text': 'Hello'})
+    
+    # Receive response from server
+    received = socketio_client.get_received()
+    assert len(received) == 1
+    assert received[0]['name'] == 'message'
+    assert 'Hello' in received[0]['args'][0]['text']
+
+def test_broadcast_to_room(socketio_client):
+    """Test broadcasting messages to a room."""
+    # Join a room
+    socketio_client.emit('join', {'room': 'test-room'})
+    
+    # Broadcast message to room
+    socketio_client.emit('broadcast', {
+        'room': 'test-room',
+        'message': 'Room announcement'
+    })
+    
+    # Verify message was broadcast
+    received = socketio_client.get_received()
+    broadcast_msgs = [msg for msg in received 
+                     if msg['name'] == 'room_message']
+    assert len(broadcast_msgs) > 0
+    assert 'Room announcement' in broadcast_msgs[0]['args'][0]
+
+def test_disconnect_from_room(socketio_client):
+    """Test leaving a WebSocket room."""
+    # Join and then leave room
+    socketio_client.emit('join', {'room': 'test-room'})
+    socketio_client.emit('leave', {'room': 'test-room'})
+    
+    # Broadcast to room
+    socketio_client.emit('broadcast', {
+        'room': 'test-room',
+        'message': 'Should not receive this'
+    })
+    
+    # Verify client did not receive message after leaving
+    received = socketio_client.get_received()
+    room_messages = [msg for msg in received 
+                    if 'Should not receive' in str(msg)]
+    assert len(room_messages) == 0
+</code></pre>
+
+        <h2>Testing Streaming Responses</h2>
+
+        <p>Streaming responses are useful for large file downloads, server-sent events, or any scenario where you want to send data incrementally. Here's how to test them:</p>
+
+        <pre><code class="language-python"># tests/test_streaming.py
+import pytest
+
+def test_streaming_large_file(client):
+    """Test streaming a large file download."""
+    response = client.get('/download/large_file.zip', stream=True)
+    
+    assert response.status_code == 200
+    assert response.is_streamed
+    
+    # Collect streamed data
+    chunks = []
+    for chunk in response.response:
+        chunks.append(chunk)
+    
+    # Verify we got data in chunks
+    assert len(chunks) > 1
+    
+    # Verify total size
+    total_size = sum(len(chunk) for chunk in chunks)
+    assert total_size > 0
+
+def test_server_sent_events(client):
+    """Test server-sent events stream."""
+    response = client.get('/events/stream')
+    
+    assert response.status_code == 200
+    assert response.content_type == 'text/event-stream'
+    
+    # Read events from stream
+    events = []
+    for line in response.response:
+        decoded = line.decode('utf-8')
+        if decoded.startswith('data:'):
+            events.append(decoded)
+    
+    # Verify events were received
+    assert len(events) > 0
+
+def test_progress_updates_stream(client):
+    """Test streaming progress updates for long-running task."""
+    response = client.post('/process/large_dataset', stream=True)
+    
+    progress_updates = []
+    for chunk in response.response:
+        decoded = chunk.decode('utf-8')
+        if 'progress' in decoded:
+            progress_updates.append(decoded)
+    
+    # Should receive multiple progress updates
+    assert len(progress_updates) >= 3
+    
+    # Last update should indicate completion
+    assert '100%' in progress_updates[-1] or 'complete' in progress_updates[-1]
+</code></pre>
+
+        <h2>Testing Middleware and Error Handlers</h2>
+
+        <p>Middleware and custom error handlers are critical for production applications. They handle authentication, logging, error formatting, and more. Here's how to test them comprehensively:</p>
+
+        <pre><code class="language-python"># tests/test_middleware.py
+import pytest
+from flask import Flask
+
+def test_authentication_middleware_blocks_unauthenticated(client):
+    """Test that middleware blocks unauthenticated requests."""
+    response = client.get('/protected/dashboard')
+    
+    assert response.status_code == 401
+    assert b'Please log in' in response.data
+
+def test_request_logging_middleware(client, app):
+    """Test that middleware logs all requests."""
+    with app.app_context():
+        # Make request
+        client.get('/api/posts')
+        
+        # Verify request was logged
+        # (In real app, check your logging system)
+        from app.models import RequestLog
+        log = RequestLog.query.filter_by(path='/api/posts').first()
+        assert log is not None
+        assert log.method == 'GET'
+
+def test_rate_limiting_middleware(client):
+    """Test that middleware enforces rate limits."""
+    # Make requests until rate limit is hit
+    for i in range(100):
+        response = client.get('/api/posts')
+    
+    # Next request should be rate limited
+    response = client.get('/api/posts')
+    assert response.status_code == 429  # Too Many Requests
+    assert b'Rate limit exceeded' in response.data
+
+def test_cors_middleware_adds_headers(client):
+    """Test that CORS middleware adds correct headers."""
+    response = client.get('/api/posts', headers={
+        'Origin': 'https://example.com'
+    })
+    
+    assert 'Access-Control-Allow-Origin' in response.headers
+
+def test_custom_404_error_handler(client):
+    """Test custom 404 error page."""
+    response = client.get('/nonexistent/page')
+    
+    assert response.status_code == 404
+    assert b'Page not found' in response.data
+    # Should use custom template, not default Flask 404
+    assert b'FlaskBlog Pro' in response.data
+
+def test_custom_500_error_handler(client, app):
+    """Test custom 500 error handler."""
+    # Create route that raises exception
+    @app.route('/trigger_error')
+    def trigger_error():
+        raise Exception('Test error')
+    
+    response = client.get('/trigger_error')
+    
+    assert response.status_code == 500
+    assert b'Something went wrong' in response.data
+    # Should not expose error details to user
+    assert b'Test error' not in response.data
+
+def test_json_error_handler_for_api(client):
+    """Test that API errors return JSON."""
+    response = client.get('/api/nonexistent')
+    
+    assert response.status_code == 404
+    assert response.content_type == 'application/json'
+    
+    data = response.get_json()
+    assert 'error' in data
+    assert data['error'] == 'Not found'
+</code></pre>
+
+        <div class="note">
+            <strong>Why Test Middleware?</strong> Middleware runs on every request, making bugs catastrophic. A broken authentication middleware could expose your entire application! Test middleware thoroughly, including edge cases like OPTIONS requests, malformed headers, and error conditions.
+        </div>
+
+        <h2>Hands-On Exercise: Building a Complete Feature with Tests</h2>
+
+        <div class="exercise">
+            <h3>Exercise: Implement Account Deletion with Email Confirmation</h3>
+
+            <p>Now it's your turn to apply everything you've learned! You're going to implement a feature that lets users delete their account, but only after confirming via email (for security). This exercise combines multiple advanced testing concepts:</p>
+
+            <h4>Requirements:</h4>
+
+            <ol>
+                <li><strong>Account deletion request:</strong> User requests account deletion from their profile page</li>
+                <li><strong>Confirmation email:</strong> Send email with secure, time-limited token (valid for 24 hours)</li>
+                <li><strong>Confirmation page:</strong> User clicks link and confirms they want to delete their account</li>
+                <li><strong>Account deletion:</strong> After confirmation, delete user account and all associated data (posts, comments)</li>
+                <li><strong>Cancellation option:</strong> User should be able to cancel deletion request</li>
+            </ol>
+
+            <h4>Your Tasks:</h4>
+
+            <ol>
+                <li>Create token generation/verification functions in <code>email_utils.py</code>:
+                    <ul>
+                        <li><code>generate_account_deletion_token(user_id)</code></li>
+                        <li><code>verify_account_deletion_token(token)</code></li>
+                        <li><code>send_account_deletion_email(user)</code></li>
+                    </ul>
+                </li>
+                <li>Add routes to <code>app/auth/routes.py</code>:
+                    <ul>
+                        <li><code>POST /auth/request_account_deletion</code></li>
+                        <li><code>GET /auth/confirm_deletion?token=...</code></li>
+                        <li><code>POST /auth/cancel_deletion</code></li>
+                    </ul>
+                </li>
+                <li>Write comprehensive tests in <code>tests/test_account_deletion.py</code>:
+                    <ul>
+                        <li>Test token generation for account deletion</li>
+                        <li>Test deletion request sends email with correct content</li>
+                        <li>Test successful account deletion with valid token</li>
+                        <li>Test all user data is deleted (posts, comments, etc.)</li>
+                        <li>Test invalid/expired tokens are rejected</li>
+                        <li>Test already-deleted accounts can't be deleted again</li>
+                        <li>Test cancellation of deletion request</li>
+                    </ul>
+                </li>
+            </ol>
+
+            <h4>Success Criteria:</h4>
+
+            <p>When complete, you should have:</p>
+
+            <ul>
+                <li>All tests passing: <code>pytest tests/test_account_deletion.py -v</code></li>
+                <li>At least 10 test functions covering different scenarios</li>
+                <li>Email content verification (checking for username, warning message, token)</li>
+                <li>Cascade deletion working (user and all related data deleted)</li>
+                <li>Security measures (token expiration, validation)</li>
+            </ul>
+
+            <h4>Hints:</h4>
+
+            <ul>
+                <li>Use <code>user.id</code> instead of <code>user.email</code> in the token (user might have already changed email)</li>
+                <li>Test that the deletion email warns users about the irreversibility</li>
+                <li>Use <code>db.session.delete(user)</code> and verify related data is gone with proper foreign key cascades</li>
+                <li>Consider adding a "pending_deletion" flag to User model to track deletion requests</li>
+            </ul>
+
+            <h4>Bonus Challenges:</h4>
+
+            <ol>
+                <li>Add a "grace period" feature where users can undo deletion within 30 days (soft delete)</li>
+                <li>Send a final "Your account has been deleted" email after successful deletion</li>
+                <li>Log account deletions for audit purposes</li>
+                <li>Test that logged-in user sessions are terminated after account deletion</li>
+            </ol>
+        </div>
+
+        <h2>Troubleshooting Advanced Features</h2>
+
+        <div class="troubleshooting">
+            <h3>Common Issues and Solutions</h3>
+
+            <h4>Email Testing Issues</h4>
+
+            <p><strong>Problem:</strong> <code>mail.outbox</code> is empty even though email should have been sent.</p>
+            <p><strong>Solution:</strong> Make sure your test config has <code>MAIL_SUPPRESS_SEND = True</code>. Also, use <code>with mail.record_messages() as outbox:</code> instead of accessing <code>mail.outbox</code> directly. The context manager is more reliable.</p>
+
+            <p><strong>Problem:</strong> Emails are sent in production even during tests.</p>
+            <p><strong>Solution:</strong> Double-check your test configuration is being loaded. Add <code>assert app.config['TESTING'] == True</code> at the start of your test to verify. Also confirm <code>MAIL_SUPPRESS_SEND</code> is set in TestingConfig.</p>
+
+            <p><strong>Problem:</strong> Tokens are always invalid in tests.</p>
+            <p><strong>Solution:</strong> Make sure you're using <code>app.app_context()</code> when generating and verifying tokens. Token generation requires the app context to access the SECRET_KEY configuration.</p>
+
+            <h4>File Upload Testing Issues</h4>
+
+            <p><strong>Problem:</strong> <code>mock_aws</code> decorator isn't working.</p>
+            <p><strong>Solution:</strong> Install <code>pip install "moto[all]"</code> to get all AWS service mocks. Also, use <code>with mock_aws():</code> as a context manager instead of the decorator if you need more control.</p>
+
+            <p><strong>Problem:</strong> File uploads work in tests but fail in production.</p>
+            <p><strong>Solution:</strong> Your tests might not be realistic enough. Test with actual file-like objects and verify file types, sizes, and permissions. Don't just test with <code>BytesIO(b'test')</code>.</p>
+
+            <h4>WebSocket Testing Issues</h4>
+
+            <p><strong>Problem:</strong> <code>socketio.test_client()</code> raises errors about eventlet.</p>
+            <p><strong>Solution:</strong> Install the required async library: <code>pip install eventlet</code> or <code>pip install gevent</code>. Flask-SocketIO needs an async server for WebSockets.</p>
+
+            <p><strong>Problem:</strong> WebSocket tests are flaky and sometimes fail.</p>
+            <p><strong>Solution:</strong> Add small delays with <code>time.sleep(0.1)</code> after emitting events to let the server process them. WebSocket communication is asynchronous!</p>
+
+            <h4>Scheduled Task Testing Issues</h4>
+
+            <p><strong>Problem:</strong> Tests run but scheduled tasks don't execute.</p>
+            <p><strong>Solution:</strong> Don't test the scheduler itself in unit tests—test the task functions directly by calling them. Save scheduler testing for integration tests or manual verification.</p>
+
+            <p><strong>Problem:</strong> Time-based tests are unreliable.</p>
+            <p><strong>Solution:</strong> Use <code>freezegun</code> library to freeze time in tests: <code>from freezegun import freeze_time</code>. This makes time-dependent tests reliable.</p>
+        </div>
+
+        <h2>What We've Learned</h2>
+
+        <p>Take a moment to appreciate everything you've accomplished in this chapter. Testing advanced features can feel intimidating, but you now have the knowledge and patterns to test even the most complex Flask applications:</p>
+
+        <ul>
+            <li>✓ You can configure Flask-Mail for testing with <code>MAIL_SUPPRESS_SEND = True</code> and use <code>mail.record_messages()</code> to capture emails</li>
+            <li>✓ You understand how to generate secure, time-limited tokens using itsdangerous for any workflow</li>
+            <li>✓ You know how to test complete email verification workflows from registration through confirmation</li>
+            <li>✓ You can test password reset functionality including token generation, email sending, and password updates</li>
+            <li>✓ You've learned patterns for testing user invitations and magic link authentication</li>
+            <li>✓ You know how to test file uploads to cloud storage using moto to mock AWS S3</li>
+            <li>✓ You can test scheduled tasks by calling task functions directly rather than testing the scheduler itself</li>
+            <li>✓ You understand how to test WebSocket connections using Flask-SocketIO's test client</li>
+            <li>✓ You've learned to test streaming responses for large downloads and server-sent events</li>
+            <li>✓ You can comprehensively test middleware and error handlers to ensure they work correctly on every request</li>
+        </ul>
+
+        <p>These are production-ready patterns! The email testing techniques you learned apply to any token-based workflow—not just email verification and password reset. The file upload mocking pattern works for any cloud storage service. The middleware testing ensures your security, logging, and error handling work flawlessly. You've filled in the gaps that most testing tutorials skip!</p>
+
+        <h2>Before You Continue...</h2>
+
+        <p>Before moving on to Chapter 15, make sure you:</p>
+
+        <ol>
+            <li>Understand the email testing workflow: configure Flask-Mail with <code>MAIL_SUPPRESS_SEND</code>, use <code>mail.record_messages()</code>, inspect email content and tokens</li>
+            <li>Know how to generate and verify tokens using itsdangerous with different salts for different workflows</li>
+            <li>Can test token expiration by using <code>max_age</code> parameter or generating tokens in the past</li>
+            <li>Understand why using different salts for different token types (email verification, password reset, etc.) is a critical security measure</li>
+            <li>Can mock AWS S3 using moto for testing file uploads without actual AWS credentials or costs</li>
+            <li>Know how to test scheduled tasks by calling them directly rather than relying on the scheduler</li>
+            <li>Understand WebSocket testing using SocketIO's test client with emit/receive patterns</li>
+            <li>Can test streaming responses by iterating over response chunks</li>
+            <li>Know how to test middleware behaviors including authentication, rate limiting, and CORS headers</li>
+            <li>Can test custom error handlers for both HTML and JSON responses</li>
+            <li>Have completed the hands-on exercise: implementing account deletion with email confirmation and comprehensive tests</li>
+        </ol>
+
+        <p>If something doesn't make complete sense yet, that's okay! Advanced feature testing is complex, and these patterns take practice to master. The most important takeaway is the general pattern: mock external services, test workflows in isolation, and verify both success and failure cases. Token-based email workflows all follow the same structure (generate, send, verify, act), file uploads can be mocked with appropriate libraries, and middleware needs thorough testing because it affects every request. Keep these principles in mind as you encounter new advanced features!</p>
+
+        <div class="success">
+            <strong>Next Up:</strong> In Chapter 15, you're going to learn the art of debugging failed tests and master Test-Driven Development (TDD). You'll discover how to use pdb to step through failing tests, how to interpret pytest's output effectively, and how to write tests before code using TDD workflow. This is the culmination of everything you've learned—you'll build a complete new feature using strict TDD, seeing how tests guide your design and catch bugs before they happen. You've learned how to test—now you'll learn to let tests drive your development!
+        </div>
+
+        <div class="nav-links">
+            <a href="chapter13.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter15.html">Next Chapter →</a>
+        </div>
+
+        <footer>
+            <p>Flask Testing Mastery - A comprehensive course on testing Flask applications</p>
+            <p style="font-size: 0.9em;">Questions or feedback? Let me know!</p>
+        </footer>
+    </div>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</body>
+</html>
