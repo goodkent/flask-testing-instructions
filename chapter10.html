@@ -1,0 +1,1681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 10: End-to-End Testing with Selenium - Flask Testing Mastery</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/prism.css">
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="chapter09.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter11.html">Next Chapter →</a>
+        </div>
+
+        <h1>Chapter 10: End-to-End Testing with Selenium</h1>
+        <p class="chapter-subtitle">Testing Your Application the Way Users Experience It</p>
+
+        <div class="github-links">
+            <span class="github-label">Chapter Code:</span>
+            <a href="https://github.com/goodkent/flask-testing/tree/ch10-end" class="github-link">Browse</a>
+            <a href="https://github.com/goodkent/flask-testing/archive/refs/tags/ch10-end.zip" class="github-link">Zip</a>
+            <a href="https://github.com/goodkent/flask-testing/compare/ch09-end...ch10-end" class="github-link">Diff</a>
+        </div>
+
+        <div class="intro-section">
+            <p>Welcome back! In the previous chapter, you built a comprehensive REST API for FlaskBlog Pro and learned how to test JSON responses, pagination, filtering, and schema validation. You can now confidently test API endpoints that return pure data.</p>
+
+            <p>But here's something to think about: all the tests you've written so far have one thing in common—they test your application from the inside. They call your routes directly, work with the database, and verify responses. None of them actually open a browser and interact with your application the way a real user would.</p>
+
+            <p>What happens when users click buttons? What if your JavaScript code has a bug? What if your CSS is hiding an important form field? What if an AJAX call fails silently? Your unit tests and API tests won't catch these issues because they don't test the complete user experience—the HTML rendering, the CSS styling, and especially the JavaScript behavior.</p>
+
+            <p>This is where end-to-end (E2E) testing comes in. E2E tests open a real browser (or a headless one), navigate through your application just like a user would, click buttons, fill forms, and verify that everything works from the user's perspective. You're going to learn how to use Selenium WebDriver to automate browsers, how to write maintainable E2E tests using the Page Object Model pattern, and how to test JavaScript-heavy features that can't be tested any other way!</p>
+        </div>
+
+        <h2>Learning Objectives</h2>
+        <ul>
+            <li>Understand when to use end-to-end tests vs unit tests</li>
+            <li>Set up Selenium WebDriver with pytest</li>
+            <li>Write basic browser automation tests</li>
+            <li>Use the Page Object Model pattern for maintainable tests</li>
+            <li>Test JavaScript interactions and AJAX calls</li>
+            <li>Handle dynamic content and waits</li>
+            <li>Run tests in headless mode for CI/CD</li>
+            <li>Debug failing E2E tests effectively</li>
+        </ul>
+
+        <h2>Why End-to-End Testing?</h2>
+
+        <p>Before we dive into Selenium, let me explain why E2E testing is important and when you should use it.</p>
+
+        <p>Think about the testing pyramid you learned in Chapter 1:</p>
+        <ul>
+            <li><strong>Unit tests</strong> (bottom, most numerous): Test individual functions and routes</li>
+            <li><strong>Integration tests</strong> (middle): Test how components work together</li>
+            <li><strong>E2E tests</strong> (top, fewest): Test complete user workflows</li>
+        </ul>
+
+        <p>You've been writing unit and integration tests throughout this course. They're fast, reliable, and easy to debug. But they have a limitation: they don't test your application through the user interface.</p>
+
+        <p>Consider what happens when a user creates a blog post on FlaskBlog Pro:</p>
+        <ol>
+            <li>They navigate to the "New Post" page</li>
+            <li>The browser loads HTML, CSS, and JavaScript</li>
+            <li>They fill in the title and content fields</li>
+            <li>JavaScript might validate the form client-side</li>
+            <li>They click the "Publish" button</li>
+            <li>JavaScript might submit the form via AJAX</li>
+            <li>The server processes the request</li>
+            <li>The browser redirects to the new post</li>
+            <li>The post appears with proper formatting</li>
+        </ol>
+
+        <p>Your unit tests can verify that the route handler works (step 7). Your API tests can verify the JSON response. But what about steps 1-6 and 8-9? What if your JavaScript has a bug? What if the CSS hides the submit button on mobile devices? What if the redirect goes to the wrong page?</p>
+
+        <p>E2E tests catch these issues by testing the complete user journey through a real browser!</p>
+
+        <div class="note">
+            <strong>The Trade-off</strong><br>
+            E2E tests are slower, more fragile, and harder to debug than unit tests. A unit test might run in milliseconds, while an E2E test could take seconds (or longer). They can fail for many reasons: JavaScript timing issues, CSS changes, network delays, browser differences. This is why you want fewer E2E tests—save them for critical user workflows, not every edge case.
+        </div>
+
+        <h3>When to Write E2E Tests</h3>
+
+        <p>You should write E2E tests for:</p>
+        <ul>
+            <li><strong>Critical user paths:</strong> Registration, login, checkout, password reset</li>
+            <li><strong>JavaScript-heavy features:</strong> Rich text editors, interactive forms, drag-and-drop</li>
+            <li><strong>AJAX interactions:</strong> Single-page app behavior, live search, auto-save</li>
+            <li><strong>Multi-step workflows:</strong> Wizards, checkout flows, onboarding sequences</li>
+            <li><strong>Cross-browser compatibility:</strong> Features that might behave differently in different browsers</li>
+        </ul>
+
+        <p>You should NOT write E2E tests for:</p>
+        <ul>
+            <li>Testing individual functions or utility methods (use unit tests)</li>
+            <li>Testing database queries (use integration tests)</li>
+            <li>Testing every validation rule (use unit tests for most, E2E for a few critical ones)</li>
+            <li>Checking every error message (test the happy path in E2E, edge cases in unit tests)</li>
+        </ul>
+
+        <p>For FlaskBlog Pro, good E2E test candidates include: user registration and login, creating and editing posts, adding comments, and admin dashboard navigation.</p>
+
+        <h2>Setting Up Selenium WebDriver</h2>
+
+        <p>Now that you understand when to use E2E tests, let's set up Selenium. Selenium WebDriver is a tool that lets you control web browsers programmatically—you can open pages, click buttons, fill forms, and verify content, all through code.</p>
+
+        <h3>Installing Dependencies</h3>
+
+        <p>First, you need to install Selenium and pytest-selenium. The pytest-selenium plugin integrates Selenium with pytest, giving you fixtures and better error messages.</p>
+
+        <pre><code class="language-bash">(venv) $ pip install selenium pytest-selenium</code></pre>
+
+        <p>Next, you need a browser driver. Selenium needs a driver to control the browser. For Chrome, you need ChromeDriver; for Firefox, you need GeckoDriver. I'll show you both options:</p>
+
+        <p><strong>Option 1: ChromeDriver (Recommended)</strong></p>
+        <pre><code class="language-bash"># Install webdriver-manager to automatically handle driver downloads
+(venv) $ pip install webdriver-manager</code></pre>
+
+        <p>The webdriver-manager library automatically downloads and manages the correct ChromeDriver version for your Chrome installation. This is much easier than downloading drivers manually!</p>
+
+        <p><strong>Option 2: GeckoDriver (Firefox)</strong></p>
+        <pre><code class="language-bash"># On macOS with Homebrew
+$ brew install geckodriver
+
+# On Linux
+$ sudo apt-get install firefox-geckodriver
+
+# Or download manually from:
+# https://github.com/mozilla/geckodriver/releases</code></pre>
+
+        <p>For this chapter, I'll use Chrome with webdriver-manager because it's the most straightforward to set up. If you prefer Firefox, the code is nearly identical—just replace <code>Chrome</code> with <code>Firefox</code> in the examples.</p>
+
+        <h3>Creating a Selenium Fixture</h3>
+
+        <p>Let's create a pytest fixture that provides a configured browser instance. Add this to your <code>conftest.py</code>:</p>
+
+        <pre><code class="language-python"># tests/conftest.py
+import pytest
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+
+@pytest.fixture(scope='function')
+def browser():
+    """Provide a Selenium WebDriver instance for E2E tests."""
+    # Set up Chrome options
+    chrome_options = webdriver.ChromeOptions()
+    
+    # Run in headless mode (no browser window)
+    # Comment this out during development to see what's happening
+    chrome_options.add_argument('--headless')
+    
+    # Disable GPU (fixes some issues on servers)
+    chrome_options.add_argument('--disable-gpu')
+    
+    # Set window size (important for headless mode)
+    chrome_options.add_argument('--window-size=1920,1080')
+    
+    # Ignore SSL certificate errors (for local development)
+    chrome_options.add_argument('--ignore-certificate-errors')
+    
+    # Set up the driver
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    
+    # Set implicit wait (how long to wait for elements)
+    driver.implicitly_wait(10)
+    
+    yield driver
+    
+    # Cleanup
+    driver.quit()
+
+
+@pytest.fixture(scope='function')
+def live_server(app):
+    """Start the Flask app on a live server for E2E tests."""
+    import threading
+    import socket
+    
+    # Find an available port
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(('', 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    
+    # Start the server in a thread
+    server_thread = threading.Thread(
+        target=app.run,
+        kwargs={'port': port, 'use_reloader': False, 'threaded': True}
+    )
+    server_thread.daemon = True
+    server_thread.start()
+    
+    # Give the server a moment to start
+    import time
+    time.sleep(1)
+    
+    # Return the server URL
+    yield f'http://localhost:{port}'
+    
+    # Server will stop when the thread daemon terminates</code></pre>
+
+        <div class="note">
+            <strong>About Headless Mode</strong><br>
+            The <code>--headless</code> flag runs Chrome without a visible window. This is great for CI/CD pipelines and faster test execution. During development, comment out this line to see what Selenium is doing—it's incredibly helpful for debugging!
+        </div>
+
+        <p>Now let's verify everything is working with a simple test:</p>
+
+        <pre><code class="language-python"># tests/test_e2e/test_basic.py
+def test_selenium_setup(browser, live_server):
+    """Test that Selenium can access the Flask app."""
+    # Navigate to the home page
+    browser.get(live_server)
+    
+    # Verify the page loaded
+    assert "FlaskBlog Pro" in browser.title
+    
+    # Print success message
+    print(f"Successfully loaded: {browser.current_url}")</code></pre>
+
+        <p>Run this test to make sure everything is configured correctly:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest tests/test_e2e/test_basic.py -v
+
+tests/test_e2e/test_basic.py::test_selenium_setup PASSED</code></pre>
+
+        <p>If this passes, congratulations! You've successfully set up Selenium and can now start writing E2E tests!</p>
+
+        <div class="troubleshooting">
+            <h3>Troubleshooting Selenium Setup</h3>
+            
+            <p><strong>Problem:</strong> "chromedriver executable not found"</p>
+            <p><strong>Solution:</strong> Make sure you installed webdriver-manager: <code>pip install webdriver-manager</code>. The first time you run tests, it will download ChromeDriver automatically.</p>
+            
+            <p><strong>Problem:</strong> "This version of ChromeDriver only supports Chrome version XX"</p>
+            <p><strong>Solution:</strong> Update Chrome or let webdriver-manager download the matching driver version. Delete any cached drivers: <code>rm -rf ~/.wdm</code></p>
+            
+            <p><strong>Problem:</strong> "Address already in use"</p>
+            <p><strong>Solution:</strong> The live server fixture couldn't find a free port. This usually happens if you have multiple Flask instances running. Kill any Flask processes and try again.</p>
+            
+            <p><strong>Problem:</strong> Test hangs or times out</p>
+            <p><strong>Solution:</strong> Remove the <code>--headless</code> flag to see what's happening. The browser might be showing an error page or waiting for an element that doesn't exist.</p>
+        </div>
+
+        <h2>Your First End-to-End Test</h2>
+
+        <p>Now that Selenium is working, let's write a real E2E test. We'll test the user registration flow—a perfect candidate for E2E testing because it involves multiple steps, form validation, and a redirect.</p>
+
+        <h3>Testing User Registration</h3>
+
+        <pre><code class="language-python"># tests/test_e2e/test_auth.py
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+def test_user_registration(browser, live_server, app):
+    """Test complete user registration workflow."""
+    # Navigate to registration page
+    browser.get(f'{live_server}/auth/register')
+    
+    # Find and fill the registration form
+    username_field = browser.find_element(By.ID, 'username')
+    email_field = browser.find_element(By.ID, 'email')
+    password_field = browser.find_element(By.ID, 'password')
+    password2_field = browser.find_element(By.ID, 'password2')
+    
+    # Fill in the form
+    username_field.send_keys('testuser')
+    email_field.send_keys('test@example.com')
+    password_field.send_keys('password123')
+    password2_field.send_keys('password123')
+    
+    # Submit the form
+    submit_button = browser.find_element(By.ID, 'submit')
+    submit_button.click()
+    
+    # Wait for redirect to complete
+    WebDriverWait(browser, 10).until(
+        EC.url_contains('/auth/login')
+    )
+    
+    # Verify success message appears
+    success_message = browser.find_element(By.CLASS_NAME, 'success')
+    assert 'Registration successful' in success_message.text
+    
+    # Verify user was created in database
+    with app.app_context():
+        from app.models import User
+        user = User.query.filter_by(username='testuser').first()
+        assert user is not None
+        assert user.email == 'test@example.com'</code></pre>
+
+        <p>Let's break down what's happening here:</p>
+
+        <ol>
+            <li><strong>Navigate:</strong> <code>browser.get(url)</code> opens a page</li>
+            <li><strong>Find elements:</strong> <code>find_element(By.ID, 'username')</code> locates form fields</li>
+            <li><strong>Interact:</strong> <code>send_keys()</code> types text, <code>click()</code> clicks buttons</li>
+            <li><strong>Wait:</strong> <code>WebDriverWait</code> waits for conditions (more on this soon!)</li>
+            <li><strong>Verify:</strong> Check the URL changed and success message appears</li>
+            <li><strong>Database check:</strong> Confirm the user was actually created</li>
+        </ol>
+
+        <p>Run this test:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest tests/test_e2e/test_auth.py::test_user_registration -v</code></pre>
+
+        <p>If you remove the <code>--headless</code> flag from your browser fixture, you'll actually see Chrome open, navigate to the registration page, fill the form, click submit, and verify the result. It's like watching a robot use your application!</p>
+
+        <h3>Finding Elements: Multiple Strategies</h3>
+
+        <p>Selenium provides several ways to find elements on a page. The previous example used <code>By.ID</code>, but there are many options:</p>
+
+        <pre><code class="language-python">from selenium.webdriver.common.by import By
+
+# By ID (fastest, most reliable)
+element = browser.find_element(By.ID, 'submit')
+
+# By name attribute
+element = browser.find_element(By.NAME, 'username')
+
+# By CSS class
+element = browser.find_element(By.CLASS_NAME, 'btn-primary')
+
+# By CSS selector (very flexible)
+element = browser.find_element(By.CSS_SELECTOR, 'form.register input[type="submit"]')
+
+# By XPath (powerful but brittle)
+element = browser.find_element(By.XPATH, '//button[@type="submit"]')
+
+# By link text
+element = browser.find_element(By.LINK_TEXT, 'Register')
+
+# By partial link text
+element = browser.find_element(By.PARTIAL_LINK_TEXT, 'Regis')
+
+# By tag name
+element = browser.find_element(By.TAG_NAME, 'h1')</code></pre>
+
+        <p>For stable, maintainable tests, prefer this hierarchy:</p>
+        <ol>
+            <li><strong>ID</strong> - Most reliable, but requires adding IDs to your HTML</li>
+            <li><strong>CSS selectors</strong> - Flexible and readable</li>
+            <li><strong>Name</strong> - Good for form fields</li>
+            <li><strong>Class name</strong> - Use only if classes are semantic, not styling-based</li>
+            <li><strong>XPath</strong> - Powerful but fragile (avoid if possible)</li>
+        </ol>
+
+        <div class="note">
+            <strong>Pro Tip: Add Test IDs</strong><br>
+            For important interactive elements, add <code>data-testid</code> attributes to your HTML:
+            <pre><code class="language-html">&lt;button data-testid="submit-post" type="submit"&gt;Publish&lt;/button&gt;</code></pre>
+            Then find them with CSS selectors:
+            <pre><code class="language-python">browser.find_element(By.CSS_SELECTOR, '[data-testid="submit-post"]')</code></pre>
+            This makes your tests resilient to CSS changes while keeping your HTML semantic.
+        </div>
+
+        <h3>Testing Login</h3>
+
+        <p>Let's write another E2E test for the login flow:</p>
+
+        <pre><code class="language-python"># tests/test_e2e/test_auth.py
+def test_user_login(browser, live_server, sample_user):
+    """Test user login workflow."""
+    # Navigate to login page
+    browser.get(f'{live_server}/auth/login')
+    
+    # Fill login form
+    username_field = browser.find_element(By.ID, 'username')
+    password_field = browser.find_element(By.ID, 'password')
+    
+    username_field.send_keys(sample_user['username'])
+    password_field.send_keys('password123')
+    
+    # Submit
+    submit_button = browser.find_element(By.ID, 'submit')
+    submit_button.click()
+    
+    # Wait for redirect to home page
+    WebDriverWait(browser, 10).until(
+        EC.url_to_be(live_server + '/')
+    )
+    
+    # Verify user sees their username in navbar
+    navbar = browser.find_element(By.ID, 'navbar')
+    assert sample_user['username'] in navbar.text
+    
+    # Verify logout link appears
+    logout_link = browser.find_element(By.LINK_TEXT, 'Logout')
+    assert logout_link.is_displayed()
+
+
+def test_login_with_wrong_password(browser, live_server, sample_user):
+    """Test login fails with incorrect password."""
+    browser.get(f'{live_server}/auth/login')
+    
+    # Try to login with wrong password
+    browser.find_element(By.ID, 'username').send_keys(sample_user['username'])
+    browser.find_element(By.ID, 'password').send_keys('wrongpassword')
+    browser.find_element(By.ID, 'submit').click()
+    
+    # Should stay on login page
+    assert '/auth/login' in browser.current_url
+    
+    # Should show error message
+    error = browser.find_element(By.CLASS_NAME, 'error')
+    assert 'Invalid username or password' in error.text</code></pre>
+
+        <p>Notice how we're testing both the happy path (successful login) and an error case (wrong password). Even in E2E tests, it's important to verify error handling!</p>
+
+        <h2>Waiting Strategies: Handling Timing Issues</h2>
+
+        <p>One of the most common issues in E2E testing is timing. Your test might try to click a button before it appears, or check for text before the page finishes loading. This section will teach you how to handle timing issues correctly.</p>
+
+        <h3>The Wrong Way: Fixed Sleeps</h3>
+
+        <p>You might be tempted to add fixed delays with <code>time.sleep()</code>:</p>
+
+        <pre><code class="language-python"># DON'T DO THIS!
+import time
+
+def test_with_sleeps(browser, live_server):
+    browser.get(f'{live_server}/posts/new')
+    time.sleep(2)  # Wait for page to load
+    
+    browser.find_element(By.ID, 'title').send_keys('My Post')
+    time.sleep(1)  # Wait for JavaScript
+    
+    browser.find_element(By.ID, 'submit').click()
+    time.sleep(3)  # Wait for redirect</code></pre>
+
+        <p>This approach has serious problems:</p>
+        <ul>
+            <li>Tests run slowly (you're waiting unnecessarily on fast systems)</li>
+            <li>Tests are still flaky (might not wait long enough on slow systems)</li>
+            <li>You're guessing at the right duration</li>
+            <li>Code is harder to maintain</li>
+        </ul>
+
+        <h3>The Right Way: Explicit Waits</h3>
+
+        <p>Selenium provides explicit waits that wait for specific conditions. This is much better:</p>
+
+        <pre><code class="language-python">from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+
+def test_with_explicit_waits(browser, live_server):
+    browser.get(f'{live_server}/posts/new')
+    
+    # Wait up to 10 seconds for the title field to be visible
+    title_field = WebDriverWait(browser, 10).until(
+        EC.presence_of_element_located((By.ID, 'title'))
+    )
+    title_field.send_keys('My Post')
+    
+    # Wait for submit button to be clickable
+    submit = WebDriverWait(browser, 10).until(
+        EC.element_to_be_clickable((By.ID, 'submit'))
+    )
+    submit.click()
+    
+    # Wait for redirect
+    WebDriverWait(browser, 10).until(
+        EC.url_contains('/posts/')
+    )</code></pre>
+
+        <p>This is better because:</p>
+        <ul>
+            <li>Tests run as fast as possible (continues as soon as condition is met)</li>
+            <li>Clear timeout (10 seconds in this case)</li>
+            <li>Descriptive error messages if condition isn't met</li>
+            <li>Handles both slow and fast systems</li>
+        </ul>
+
+        <h3>Common Expected Conditions</h3>
+
+        <p>Selenium provides many built-in conditions you can wait for:</p>
+
+        <pre><code class="language-python">from selenium.webdriver.support import expected_conditions as EC
+
+# Wait for element to be present in DOM
+EC.presence_of_element_located((By.ID, 'my-element'))
+
+# Wait for element to be visible (not just in DOM, but actually visible)
+EC.visibility_of_element_located((By.ID, 'my-element'))
+
+# Wait for element to be clickable (visible and enabled)
+EC.element_to_be_clickable((By.ID, 'submit'))
+
+# Wait for text to appear in element
+EC.text_to_be_present_in_element((By.ID, 'message'), 'Success')
+
+# Wait for URL to change
+EC.url_to_be('https://example.com/success')
+EC.url_contains('/posts/')
+EC.url_matches(r'/posts/\d+')
+
+# Wait for element to disappear
+EC.invisibility_of_element_located((By.ID, 'loading-spinner'))
+
+# Wait for title
+EC.title_is('My Page Title')
+EC.title_contains('FlaskBlog')
+
+# Wait for alert
+EC.alert_is_present()
+
+# Wait for element attribute to have value
+EC.text_to_be_present_in_element_value((By.ID, 'username'), 'admin')</code></pre>
+
+        <h3>Implicit Waits</h3>
+
+        <p>We already set an implicit wait in our browser fixture:</p>
+
+        <pre><code class="language-python">driver.implicitly_wait(10)</code></pre>
+
+        <p>This tells Selenium to wait up to 10 seconds when searching for elements. It's a good default that makes your tests more forgiving, but explicit waits are still better for specific conditions.</p>
+
+        <div class="note">
+            <strong>Implicit vs Explicit Waits</strong><br>
+            <ul>
+                <li><strong>Implicit wait:</strong> Applies to all <code>find_element()</code> calls. Set once, works everywhere.</li>
+                <li><strong>Explicit wait:</strong> Waits for specific conditions. More precise, better error messages.</li>
+            </ul>
+            You can use both together. Implicit waits provide a safety net, while explicit waits handle specific timing requirements.
+        </div>
+
+        <h3>Waiting for AJAX Calls</h3>
+
+        <p>Modern web apps often load content via AJAX. Here's how to wait for AJAX calls to complete:</p>
+
+        <pre><code class="language-python">def test_ajax_loaded_content(browser, live_server):
+    """Test content loaded via AJAX."""
+    browser.get(f'{live_server}/posts')
+    
+    # Click "Load More" button (triggers AJAX)
+    load_more = browser.find_element(By.ID, 'load-more')
+    load_more.click()
+    
+    # Wait for loading spinner to appear
+    WebDriverWait(browser, 5).until(
+        EC.presence_of_element_located((By.ID, 'loading-spinner'))
+    )
+    
+    # Wait for loading spinner to disappear (AJAX complete)
+    WebDriverWait(browser, 10).until(
+        EC.invisibility_of_element_located((By.ID, 'loading-spinner'))
+    )
+    
+    # Now verify the new content loaded
+    posts = browser.find_elements(By.CLASS_NAME, 'post')
+    assert len(posts) > 5  # Should have loaded more posts</code></pre>
+
+        <p>This pattern—wait for loading indicator to appear, then wait for it to disappear—is very common in testing AJAX interactions.</p>
+
+        <h3>Custom Wait Conditions</h3>
+
+        <p>Sometimes the built-in conditions aren't enough. You can create custom wait conditions:</p>
+
+        <pre><code class="language-python">def test_custom_wait_condition(browser, live_server):
+    """Test using a custom wait condition."""
+    browser.get(f'{live_server}/posts')
+    
+    # Custom condition: wait for at least 5 posts to load
+    def at_least_n_posts(n):
+        def check(driver):
+            posts = driver.find_elements(By.CLASS_NAME, 'post')
+            return len(posts) >= n
+        return check
+    
+    # Wait for condition
+    WebDriverWait(browser, 10).until(at_least_n_posts(5))
+    
+    # Verify
+    posts = browser.find_elements(By.CLASS_NAME, 'post')
+    assert len(posts) >= 5</code></pre>
+
+        <p>Custom conditions give you complete flexibility for complex timing requirements!</p>
+
+        <h2>Page Object Model: Writing Maintainable Tests</h2>
+
+        <p>As you write more E2E tests, you'll notice a problem: lots of duplicated code. Every test that logs in a user needs to find the username field, password field, and submit button. If you change your login form's HTML, you have to update every test that touches it!</p>
+
+        <p>This is where the Page Object Model (POM) pattern comes in. It's one of the most important patterns for maintainable E2E testing.</p>
+
+        <h3>The Problem: Duplicated Selectors</h3>
+
+        <p>Look at these three tests:</p>
+
+        <pre><code class="language-python"># Tests WITHOUT Page Object Model
+def test_login_as_admin(browser, live_server):
+    browser.get(f'{live_server}/auth/login')
+    browser.find_element(By.ID, 'username').send_keys('admin')
+    browser.find_element(By.ID, 'password').send_keys('admin123')
+    browser.find_element(By.ID, 'submit').click()
+    # ...
+
+def test_login_as_user(browser, live_server):
+    browser.get(f'{live_server}/auth/login')
+    browser.find_element(By.ID, 'username').send_keys('user')
+    browser.find_element(By.ID, 'password').send_keys('user123')
+    browser.find_element(By.ID, 'submit').click()
+    # ...
+
+def test_login_with_remember_me(browser, live_server):
+    browser.get(f'{live_server}/auth/login')
+    browser.find_element(By.ID, 'username').send_keys('user')
+    browser.find_element(By.ID, 'password').send_keys('user123')
+    browser.find_element(By.ID, 'remember_me').click()
+    browser.find_element(By.ID, 'submit').click()
+    # ...</code></pre>
+
+        <p>If you change the login form's ID from <code>username</code> to <code>user_name</code>, you have to update all three tests (and any others that touch login). That's a maintenance nightmare!</p>
+
+        <h3>The Solution: Page Objects</h3>
+
+        <p>Create a class that represents the login page and encapsulates all its selectors and actions:</p>
+
+        <pre><code class="language-python"># tests/pages/login_page.py
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+class LoginPage:
+    """Page Object for the login page."""
+    
+    # Locators
+    USERNAME_FIELD = (By.ID, 'username')
+    PASSWORD_FIELD = (By.ID, 'password')
+    REMEMBER_ME = (By.ID, 'remember_me')
+    SUBMIT_BUTTON = (By.ID, 'submit')
+    ERROR_MESSAGE = (By.CLASS_NAME, 'error')
+    
+    def __init__(self, browser):
+        self.browser = browser
+    
+    def open(self, base_url):
+        """Navigate to the login page."""
+        self.browser.get(f'{base_url}/auth/login')
+        return self
+    
+    def login(self, username, password, remember=False):
+        """Fill and submit the login form."""
+        self.browser.find_element(*self.USERNAME_FIELD).send_keys(username)
+        self.browser.find_element(*self.PASSWORD_FIELD).send_keys(password)
+        
+        if remember:
+            self.browser.find_element(*self.REMEMBER_ME).click()
+        
+        self.browser.find_element(*self.SUBMIT_BUTTON).click()
+        
+        # Wait for navigation away from login page
+        WebDriverWait(self.browser, 10).until(
+            EC.url_changes(self.browser.current_url)
+        )
+        return self
+    
+    def get_error_message(self):
+        """Get the error message text if present."""
+        try:
+            error = self.browser.find_element(*self.ERROR_MESSAGE)
+            return error.text
+        except:
+            return None
+    
+    def is_displayed(self):
+        """Check if we're on the login page."""
+        return '/auth/login' in self.browser.current_url</code></pre>
+
+        <p>Now your tests become much cleaner:</p>
+
+        <pre><code class="language-python"># tests/test_e2e/test_auth_pom.py
+from tests.pages.login_page import LoginPage
+
+def test_login_as_admin(browser, live_server):
+    login_page = LoginPage(browser)
+    login_page.open(live_server)
+    login_page.login('admin', 'admin123')
+    
+    # Verify we're on home page
+    assert browser.current_url == live_server + '/'
+
+def test_login_as_user(browser, live_server):
+    login_page = LoginPage(browser)
+    login_page.open(live_server)
+    login_page.login('user', 'user123')
+    
+    assert browser.current_url == live_server + '/'
+
+def test_login_with_remember_me(browser, live_server):
+    login_page = LoginPage(browser)
+    login_page.open(live_server)
+    login_page.login('user', 'user123', remember=True)
+    
+    assert browser.current_url == live_server + '/'
+
+def test_login_with_wrong_password(browser, live_server, sample_user):
+    login_page = LoginPage(browser)
+    login_page.open(live_server)
+    login_page.login(sample_user['username'], 'wrongpassword')
+    
+    # Should still be on login page
+    assert login_page.is_displayed()
+    
+    # Should show error
+    assert 'Invalid username or password' in login_page.get_error_message()</code></pre>
+
+        <p>Look how much cleaner that is! The tests are readable, the login logic is in one place, and if you need to change selectors, you only update the LoginPage class.</p>
+
+        <h3>Benefits of Page Object Model</h3>
+
+        <ul>
+            <li><strong>Single source of truth:</strong> Selectors defined in one place</li>
+            <li><strong>Easier maintenance:</strong> Change HTML? Update one class, not dozens of tests</li>
+            <li><strong>More readable tests:</strong> <code>login_page.login()</code> is clearer than three find_element calls</li>
+            <li><strong>Reusable code:</strong> Login page object can be used across many tests</li>
+            <li><strong>Encapsulation:</strong> Tests don't care about HOW login works, just THAT it works</li>
+        </ul>
+
+        <h3>More Page Object Examples</h3>
+
+        <p>Let's create page objects for other parts of FlaskBlog Pro:</p>
+
+        <pre><code class="language-python"># tests/pages/post_form_page.py
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+class PostFormPage:
+    """Page Object for create/edit post form."""
+    
+    TITLE_FIELD = (By.ID, 'title')
+    CONTENT_FIELD = (By.ID, 'content')
+    SUBMIT_BUTTON = (By.ID, 'submit')
+    CANCEL_LINK = (By.LINK_TEXT, 'Cancel')
+    
+    def __init__(self, browser):
+        self.browser = browser
+    
+    def open_new_post(self, base_url):
+        """Navigate to new post page."""
+        self.browser.get(f'{base_url}/posts/new')
+        return self
+    
+    def open_edit_post(self, base_url, post_id):
+        """Navigate to edit post page."""
+        self.browser.get(f'{base_url}/posts/{post_id}/edit')
+        return self
+    
+    def fill_form(self, title, content):
+        """Fill in the post form."""
+        title_field = self.browser.find_element(*self.TITLE_FIELD)
+        title_field.clear()
+        title_field.send_keys(title)
+        
+        content_field = self.browser.find_element(*self.CONTENT_FIELD)
+        content_field.clear()
+        content_field.send_keys(content)
+        
+        return self
+    
+    def submit(self):
+        """Submit the form."""
+        self.browser.find_element(*self.SUBMIT_BUTTON).click()
+        
+        # Wait for navigation
+        WebDriverWait(self.browser, 10).until(
+            EC.url_contains('/posts/')
+        )
+        return self
+    
+    def cancel(self):
+        """Click cancel link."""
+        self.browser.find_element(*self.CANCEL_LINK).click()
+        return self</code></pre>
+
+        <pre><code class="language-python"># tests/pages/post_page.py
+from selenium.webdriver.common.by import By
+
+class PostPage:
+    """Page Object for viewing a single post."""
+    
+    TITLE = (By.CSS_SELECTOR, 'h1.post-title')
+    CONTENT = (By.CSS_SELECTOR, 'div.post-content')
+    AUTHOR = (By.CSS_SELECTOR, 'span.post-author')
+    EDIT_LINK = (By.LINK_TEXT, 'Edit')
+    DELETE_BUTTON = (By.ID, 'delete-post')
+    COMMENT_FORM = (By.ID, 'comment-form')
+    COMMENTS_LIST = (By.CSS_SELECTOR, 'div.comments-list')
+    
+    def __init__(self, browser):
+        self.browser = browser
+    
+    def open(self, base_url, post_id):
+        """Navigate to a post page."""
+        self.browser.get(f'{base_url}/posts/{post_id}')
+        return self
+    
+    def get_title(self):
+        """Get the post title."""
+        return self.browser.find_element(*self.TITLE).text
+    
+    def get_content(self):
+        """Get the post content."""
+        return self.browser.find_element(*self.CONTENT).text
+    
+    def get_author(self):
+        """Get the post author."""
+        return self.browser.find_element(*self.AUTHOR).text
+    
+    def click_edit(self):
+        """Click the edit link."""
+        self.browser.find_element(*self.EDIT_LINK).click()
+        return self
+    
+    def is_edit_button_visible(self):
+        """Check if edit button is visible (for permission checks)."""
+        try:
+            edit_link = self.browser.find_element(*self.EDIT_LINK)
+            return edit_link.is_displayed()
+        except:
+            return False</code></pre>
+
+        <p>Now you can write comprehensive E2E tests with clean, readable code:</p>
+
+        <pre><code class="language-python"># tests/test_e2e/test_posts_pom.py
+from tests.pages.login_page import LoginPage
+from tests.pages.post_form_page import PostFormPage
+from tests.pages.post_page import PostPage
+
+def test_create_post_workflow(browser, live_server, sample_user):
+    """Test complete post creation workflow."""
+    # Login
+    login_page = LoginPage(browser)
+    login_page.open(live_server).login(
+        sample_user['username'], 
+        'password123'
+    )
+    
+    # Create post
+    post_form = PostFormPage(browser)
+    post_form.open_new_post(live_server)
+    post_form.fill_form(
+        'My Selenium Post',
+        'This post was created by Selenium!'
+    )
+    post_form.submit()
+    
+    # Verify post was created
+    post_page = PostPage(browser)
+    assert post_page.get_title() == 'My Selenium Post'
+    assert 'created by Selenium' in post_page.get_content()
+    assert sample_user['username'] in post_page.get_author()
+
+
+def test_edit_own_post(browser, live_server, sample_user, sample_post):
+    """Test users can edit their own posts."""
+    # Login as post author
+    login_page = LoginPage(browser)
+    login_page.open(live_server).login(
+        sample_user['username'],
+        'password123'
+    )
+    
+    # View post
+    post_page = PostPage(browser)
+    post_page.open(live_server, sample_post['id'])
+    
+    # Verify edit button visible
+    assert post_page.is_edit_button_visible()
+    
+    # Edit post
+    post_page.click_edit()
+    
+    post_form = PostFormPage(browser)
+    post_form.fill_form(
+        'Updated Title',
+        'Updated content'
+    )
+    post_form.submit()
+    
+    # Verify changes
+    assert post_page.get_title() == 'Updated Title'
+    assert post_page.get_content() == 'Updated content'</code></pre>
+
+        <p>Beautiful! These tests are readable, maintainable, and clearly express user workflows.</p>
+
+        <h2>Testing JavaScript Interactions</h2>
+
+        <p>Modern web applications are full of JavaScript-driven interactions: modals, dropdowns, rich text editors, drag-and-drop interfaces. E2E testing is the ONLY way to test these features properly—unit tests can't verify that your JavaScript actually works in the browser!</p>
+
+        <h3>Testing Modal Dialogs</h3>
+
+        <p>Let's say FlaskBlog Pro has a delete confirmation modal. Here's how to test it:</p>
+
+        <pre><code class="language-python">def test_delete_post_with_confirmation(browser, live_server, sample_user, sample_post):
+    """Test deleting a post with JavaScript confirmation modal."""
+    # Login and navigate to post
+    LoginPage(browser).open(live_server).login(
+        sample_user['username'],
+        'password123'
+    )
+    
+    browser.get(f'{live_server}/posts/{sample_post["id"]}')
+    
+    # Click delete button (opens modal)
+    delete_button = browser.find_element(By.ID, 'delete-post')
+    delete_button.click()
+    
+    # Wait for modal to appear
+    modal = WebDriverWait(browser, 10).until(
+        EC.visibility_of_element_located((By.ID, 'delete-modal'))
+    )
+    
+    # Verify modal text
+    assert 'Are you sure' in modal.text
+    
+    # Click confirm in modal
+    confirm_button = modal.find_element(By.ID, 'confirm-delete')
+    confirm_button.click()
+    
+    # Wait for modal to disappear
+    WebDriverWait(browser, 10).until(
+        EC.invisibility_of_element_located((By.ID, 'delete-modal'))
+    )
+    
+    # Verify redirected to posts list
+    WebDriverWait(browser, 10).until(
+        EC.url_contains('/posts')
+    )
+    
+    # Verify post is gone from database
+    with app.app_context():
+        from app.models import Post
+        post = Post.query.get(sample_post['id'])
+        assert post is None</code></pre>
+
+        <h3>Testing Dropdowns and Select Elements</h3>
+
+        <p>HTML select elements need special handling:</p>
+
+        <pre><code class="language-python">from selenium.webdriver.support.select import Select
+
+def test_filter_posts_by_category(browser, live_server):
+    """Test filtering posts using a dropdown."""
+    browser.get(f'{live_server}/posts')
+    
+    # Find the category dropdown
+    category_dropdown = Select(browser.find_element(By.ID, 'category-filter'))
+    
+    # Select by visible text
+    category_dropdown.select_by_visible_text('Technology')
+    
+    # Or select by value
+    # category_dropdown.select_by_value('tech')
+    
+    # Or select by index
+    # category_dropdown.select_by_index(1)
+    
+    # Wait for page to reload or AJAX to complete
+    WebDriverWait(browser, 10).until(
+        EC.presence_of_element_located((By.CLASS_NAME, 'post'))
+    )
+    
+    # Verify all posts are in Technology category
+    posts = browser.find_elements(By.CLASS_NAME, 'post')
+    for post in posts:
+        category = post.find_element(By.CLASS_NAME, 'post-category')
+        assert 'Technology' in category.text</code></pre>
+
+        <h3>Testing Forms with Client-Side Validation</h3>
+
+        <p>If your forms have JavaScript validation, you need to test it:</p>
+
+        <pre><code class="language-python">def test_client_side_validation(browser, live_server):
+    """Test JavaScript form validation."""
+    browser.get(f'{live_server}/posts/new')
+    
+    # Try to submit empty form
+    submit_button = browser.find_element(By.ID, 'submit')
+    submit_button.click()
+    
+    # JavaScript should prevent submission and show error
+    # (We should still be on the form page)
+    assert '/posts/new' in browser.current_url
+    
+    # Check for validation error message
+    error = browser.find_element(By.CLASS_NAME, 'validation-error')
+    assert 'Title is required' in error.text
+    
+    # Fill in title but leave content empty
+    title_field = browser.find_element(By.ID, 'title')
+    title_field.send_keys('Test Title')
+    submit_button.click()
+    
+    # Should show error for content
+    error = browser.find_element(By.CLASS_NAME, 'validation-error')
+    assert 'Content is required' in error.text</code></pre>
+
+        <h3>Testing Rich Text Editors</h3>
+
+        <p>Rich text editors (like TinyMCE or Quill) are challenging because they often use iframes or contenteditable divs:</p>
+
+        <pre><code class="language-python">def test_rich_text_editor(browser, live_server):
+    """Test rich text editor functionality."""
+    LoginPage(browser).open(live_server).login('user', 'password123')
+    browser.get(f'{live_server}/posts/new')
+    
+    # For iframe-based editors (like TinyMCE)
+    # Switch to the iframe
+    iframe = browser.find_element(By.ID, 'content_ifr')
+    browser.switch_to.frame(iframe)
+    
+    # Now you can interact with the editor content
+    editor_body = browser.find_element(By.ID, 'tinymce')
+    editor_body.send_keys('This is rich text content')
+    
+    # Switch back to main content
+    browser.switch_to.default_content()
+    
+    # For contenteditable-based editors (like Quill)
+    # Find the contenteditable div
+    editor = browser.find_element(By.CSS_SELECTOR, '[contenteditable="true"]')
+    editor.send_keys('This is rich text content')
+    
+    # Submit form
+    browser.find_element(By.ID, 'submit').click()
+    
+    # Verify content was saved
+    WebDriverWait(browser, 10).until(
+        EC.url_contains('/posts/')
+    )
+    
+    content_div = browser.find_element(By.CLASS_NAME, 'post-content')
+    assert 'This is rich text content' in content_div.text</code></pre>
+
+        <h3>Executing JavaScript Directly</h3>
+
+        <p>Sometimes you need to execute JavaScript directly in the browser:</p>
+
+        <pre><code class="language-python">def test_scroll_to_element(browser, live_server):
+    """Test scrolling to an element with JavaScript."""
+    browser.get(f'{live_server}/posts')
+    
+    # Find element at bottom of page
+    footer = browser.find_element(By.TAG_NAME, 'footer')
+    
+    # Scroll to it using JavaScript
+    browser.execute_script("arguments[0].scrollIntoView();", footer)
+    
+    # Verify element is in viewport
+    assert footer.is_displayed()
+
+
+def test_get_javascript_variable(browser, live_server):
+    """Test getting a JavaScript variable value."""
+    browser.get(f'{live_server}/')
+    
+    # Get page title using JavaScript
+    page_title = browser.execute_script("return document.title;")
+    assert "FlaskBlog Pro" in page_title
+    
+    # Get window width
+    width = browser.execute_script("return window.innerWidth;")
+    assert width > 0
+
+
+def test_trigger_javascript_event(browser, live_server):
+    """Test triggering a custom JavaScript event."""
+    browser.get(f'{live_server}/posts/new')
+    
+    # Trigger a custom event
+    browser.execute_script("""
+        var event = new CustomEvent('contentChanged', {
+            detail: { source: 'test' }
+        });
+        document.dispatchEvent(event);
+    """)
+    
+    # Verify the event handler did something
+    # (This depends on your application's event handlers)</code></pre>
+
+        <div class="note">
+            <strong>When to Use execute_script()</strong><br>
+            Use <code>execute_script()</code> sparingly! It's powerful but can make tests brittle. Prefer native Selenium actions (click, send_keys) when possible. Use JavaScript execution for:
+            <ul>
+                <li>Scrolling to elements</li>
+                <li>Reading JavaScript variables</li>
+                <li>Triggering events that can't be simulated otherwise</li>
+                <li>Working around limitations in older browsers</li>
+            </ul>
+        </div>
+
+        <h3>Testing AJAX Updates</h3>
+
+        <p>Testing AJAX-heavy features requires careful waiting strategies:</p>
+
+        <pre><code class="language-python">def test_live_search(browser, live_server):
+    """Test live search with AJAX."""
+    browser.get(f'{live_server}/posts')
+    
+    # Find search box
+    search_box = browser.find_element(By.ID, 'search')
+    
+    # Type search query
+    search_box.send_keys('python')
+    
+    # Wait for AJAX to complete (look for loading indicator)
+    WebDriverWait(browser, 5).until(
+        EC.presence_of_element_located((By.ID, 'search-loading'))
+    )
+    
+    WebDriverWait(browser, 10).until(
+        EC.invisibility_of_element_located((By.ID, 'search-loading'))
+    )
+    
+    # Verify results filtered
+    posts = browser.find_elements(By.CLASS_NAME, 'post')
+    assert len(posts) > 0
+    
+    # All visible posts should contain 'python'
+    for post in posts:
+        post_text = post.text.lower()
+        assert 'python' in post_text
+
+
+def test_infinite_scroll(browser, live_server):
+    """Test infinite scroll loading more posts."""
+    browser.get(f'{live_server}/posts')
+    
+    # Count initial posts
+    initial_posts = browser.find_elements(By.CLASS_NAME, 'post')
+    initial_count = len(initial_posts)
+    
+    # Scroll to bottom
+    browser.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+    
+    # Wait for new posts to load
+    WebDriverWait(browser, 10).until(
+        lambda driver: len(driver.find_elements(By.CLASS_NAME, 'post')) > initial_count
+    )
+    
+    # Verify more posts loaded
+    new_posts = browser.find_elements(By.CLASS_NAME, 'post')
+    assert len(new_posts) > initial_count</code></pre>
+
+        <h2>Headless Mode and CI/CD Integration</h2>
+
+        <p>When you run E2E tests in a CI/CD pipeline (GitHub Actions, GitLab CI, etc.), you can't open a visible browser window—the server has no display! This is where headless mode becomes essential.</p>
+
+        <h3>Configuring Headless Mode</h3>
+
+        <p>We already configured headless mode in our browser fixture:</p>
+
+        <pre><code class="language-python"># tests/conftest.py
+@pytest.fixture(scope='function')
+def browser():
+    chrome_options = webdriver.ChromeOptions()
+    chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--disable-gpu')
+    chrome_options.add_argument('--window-size=1920,1080')
+    # ...</code></pre>
+
+        <p>But for development, you want to see what's happening. Here's a better approach using environment variables:</p>
+
+        <pre><code class="language-python"># tests/conftest.py
+import os
+import pytest
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+
+@pytest.fixture(scope='function')
+def browser():
+    """Provide a Selenium WebDriver instance."""
+    chrome_options = webdriver.ChromeOptions()
+    
+    # Only run headless in CI or if explicitly requested
+    if os.environ.get('CI') or os.environ.get('HEADLESS'):
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--disable-gpu')
+    
+    chrome_options.add_argument('--window-size=1920,1080')
+    chrome_options.add_argument('--ignore-certificate-errors')
+    
+    # Additional options for CI environments
+    if os.environ.get('CI'):
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+    
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    driver.implicitly_wait(10)
+    
+    yield driver
+    driver.quit()</code></pre>
+
+        <p>Now you can run tests with visible browser during development:</p>
+
+        <pre><code class="language-bash"># Development: see the browser
+(venv) $ pytest tests/test_e2e/
+
+# CI or headless mode
+(venv) $ HEADLESS=1 pytest tests/test_e2e/</code></pre>
+
+        <h3>Debugging Headless Tests</h3>
+
+        <p>When headless tests fail, debugging is harder. Here are some techniques:</p>
+
+        <p><strong>1. Take Screenshots</strong></p>
+
+        <pre><code class="language-python">def test_with_screenshot(browser, live_server, tmp_path):
+    """Test that saves screenshot on failure."""
+    try:
+        browser.get(f'{live_server}/posts')
+        element = browser.find_element(By.ID, 'nonexistent')
+    except Exception as e:
+        # Save screenshot
+        screenshot_path = tmp_path / 'failure.png'
+        browser.save_screenshot(str(screenshot_path))
+        print(f"Screenshot saved to {screenshot_path}")
+        raise</code></pre>
+
+        <p><strong>2. Use pytest-selenium's automatic screenshots:</strong></p>
+
+        <pre><code class="language-python"># pytest.ini or pyproject.toml
+[tool.pytest.ini_options]
+# Save screenshot on failure
+selenium_capture_debug = screenshot
+# Save HTML on failure
+selenium_capture_debug = screenshot,html</code></pre>
+
+        <p><strong>3. Save page source:</strong></p>
+
+        <pre><code class="language-python">def test_with_page_source(browser, live_server, tmp_path):
+    """Test that saves page source on failure."""
+    try:
+        browser.get(f'{live_server}/posts')
+        element = browser.find_element(By.ID, 'nonexistent')
+    except Exception as e:
+        # Save page HTML
+        html_path = tmp_path / 'failure.html'
+        html_path.write_text(browser.page_source)
+        print(f"Page source saved to {html_path}")
+        raise</code></pre>
+
+        <h3>GitHub Actions Example</h3>
+
+        <p>Here's a complete GitHub Actions workflow for E2E tests:</p>
+
+        <pre><code class="language-yaml"># .github/workflows/e2e-tests.yml
+name: E2E Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run E2E tests
+        env:
+          CI: true
+        run: |
+          pytest tests/test_e2e/ -v --tb=short
+      
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-screenshots
+          path: test-results/screenshots/</code></pre>
+
+        <h2>Cross-Browser Testing</h2>
+
+        <p>Different browsers can render your application differently. While Chrome is most common, testing in Firefox, Safari, and Edge provides better coverage.</p>
+
+        <h3>Parametrized Browser Fixture</h3>
+
+        <pre><code class="language-python"># tests/conftest.py
+import pytest
+from selenium import webdriver
+
+@pytest.fixture(scope='function', params=['chrome', 'firefox'])
+def browser(request):
+    """Parametrized browser fixture for cross-browser testing."""
+    browser_name = request.param
+    
+    if browser_name == 'chrome':
+        chrome_options = webdriver.ChromeOptions()
+        chrome_options.add_argument('--headless')
+        driver = webdriver.Chrome(options=chrome_options)
+    
+    elif browser_name == 'firefox':
+        firefox_options = webdriver.FirefoxOptions()
+        firefox_options.add_argument('--headless')
+        driver = webdriver.Firefox(options=firefox_options)
+    
+    driver.implicitly_wait(10)
+    yield driver
+    driver.quit()</code></pre>
+
+        <p>This fixture will run every test twice—once in Chrome, once in Firefox:</p>
+
+        <pre><code class="language-bash">(venv) $ pytest tests/test_e2e/test_auth.py -v
+
+test_auth.py::test_login[chrome] PASSED
+test_auth.py::test_login[firefox] PASSED</code></pre>
+
+        <p>For selective cross-browser testing, use markers:</p>
+
+        <pre><code class="language-python"># Mark specific tests for cross-browser
+@pytest.mark.cross_browser
+def test_critical_workflow(browser, live_server):
+    """This test runs in all browsers."""
+    # ...</code></pre>
+
+        <pre><code class="language-bash"># Run only cross-browser tests
+(venv) $ pytest -m cross_browser</code></pre>
+
+        <div class="note">
+            <strong>Browser Considerations</strong><br>
+            <ul>
+                <li><strong>Chrome:</strong> Most popular, best Selenium support, fastest</li>
+                <li><strong>Firefox:</strong> Good alternative, slightly different rendering</li>
+                <li><strong>Safari:</strong> MacOS only, requires Safari driver installation</li>
+                <li><strong>Edge:</strong> Windows, similar to Chrome (both use Chromium)</li>
+            </ul>
+            For most projects, testing Chrome + Firefox covers 95% of users.
+        </div>
+
+        <h2>E2E Testing Best Practices</h2>
+
+        <p>After writing many E2E tests, you'll discover these practices make life easier:</p>
+
+        <h3>1. Keep Tests Independent</h3>
+
+        <p>Each E2E test should be independent—it should work if run alone or with others:</p>
+
+        <pre><code class="language-python"># GOOD: Each test sets up its own data
+def test_delete_post(browser, live_server, sample_user, app):
+    # Create post for this test
+    with app.app_context():
+        post = Post(title='Test', content='Content', author_id=sample_user['id'])
+        db.session.add(post)
+        db.session.commit()
+        post_id = post.id
+    
+    # Test deletion
+    # ...
+
+# BAD: Depends on previous test creating a post
+def test_delete_post(browser, live_server):
+    # Assumes a post exists
+    # ...</code></pre>
+
+        <h3>2. Use Descriptive Selectors</h3>
+
+        <p>Prefer semantic IDs and data attributes over fragile CSS selectors:</p>
+
+        <pre><code class="language-python"># GOOD: Semantic ID
+browser.find_element(By.ID, 'login-submit')
+
+# GOOD: Data attribute
+browser.find_element(By.CSS_SELECTOR, '[data-testid="login-submit"]')
+
+# BAD: Fragile class-based selector
+browser.find_element(By.CSS_SELECTOR, 'div.container > form > button.btn.btn-primary')</code></pre>
+
+        <h3>3. Don't Over-Test with E2E</h3>
+
+        <p>Remember the testing pyramid—E2E tests are the most expensive. Test critical paths only:</p>
+
+        <ul>
+            <li><strong>DO test:</strong> User registration, login, post creation</li>
+            <li><strong>DON'T test:</strong> Every validation message, every error case</li>
+        </ul>
+
+        <h3>4. Set Realistic Timeouts</h3>
+
+        <pre><code class="language-python"># TOO SHORT: Will cause flaky tests
+WebDriverWait(browser, 1).until(EC.url_contains('/posts'))
+
+# GOOD: Reasonable timeout
+WebDriverWait(browser, 10).until(EC.url_contains('/posts'))
+
+# TOO LONG: Slows down test suite unnecessarily
+WebDriverWait(browser, 60).until(EC.url_contains('/posts'))</code></pre>
+
+        <h3>5. Clean Up Test Data</h3>
+
+        <p>E2E tests can leave data in the database. Use fixtures that clean up:</p>
+
+        <pre><code class="language-python">@pytest.fixture
+def clean_database(app):
+    """Ensure database is clean before and after test."""
+    with app.app_context():
+        db.drop_all()
+        db.create_all()
+        yield
+        db.session.remove()
+        db.drop_all()</code></pre>
+
+        <h2>Hands-On Exercise: Test the Comment System</h2>
+
+        <p>Now it's your turn to write E2E tests! You're going to test the comment system on FlaskBlog Pro. This exercise will give you practice with Page Object Model, JavaScript interactions, and AJAX testing.</p>
+
+        <div class="exercise">
+            <h3>Exercise Requirements</h3>
+
+            <p>Create comprehensive E2E tests for the comment system with these features:</p>
+
+            <ol>
+                <li><strong>Viewing Comments:</strong> Test that comments display correctly on a post</li>
+                <li><strong>Adding Comments:</strong> Test the complete workflow of adding a comment</li>
+                <li><strong>Deleting Comments:</strong> Test comment deletion with confirmation modal</li>
+                <li><strong>Unauthorized Access:</strong> Test that non-logged-in users can't add comments</li>
+            </ol>
+
+            <h3>Step 1: Create Page Objects</h3>
+
+            <p>First, create page objects for the comment functionality. Create a file <code>tests/pages/comment_section.py</code>:</p>
+
+            <pre><code class="language-python"># tests/pages/comment_section.py
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+class CommentSection:
+    """Page Object for post comment section."""
+    
+    # Locators
+    COMMENT_FORM = (By.ID, 'comment-form')
+    COMMENT_TEXTAREA = (By.ID, 'comment-content')
+    SUBMIT_BUTTON = (By.ID, 'submit-comment')
+    COMMENTS_LIST = (By.ID, 'comments-list')
+    COMMENT_ITEM = (By.CLASS_NAME, 'comment-item')
+    DELETE_COMMENT_BTN = (By.CSS_SELECTOR, '[data-testid="delete-comment"]')
+    CONFIRM_DELETE_BTN = (By.ID, 'confirm-delete-comment')
+    LOGIN_PROMPT = (By.CLASS_NAME, 'login-to-comment')
+    
+    def __init__(self, browser):
+        self.browser = browser
+    
+    # TODO: Implement methods:
+    # - is_comment_form_visible()
+    # - add_comment(content)
+    # - get_comment_count()
+    # - get_comment_text(index)
+    # - delete_comment(index)
+    # - is_login_prompt_visible()</code></pre>
+
+            <h3>Step 2: Implement Page Object Methods</h3>
+
+            <p>Fill in the missing methods. Here's a hint for one of them:</p>
+
+            <pre><code class="language-python">def add_comment(self, content):
+    """Add a comment to the post."""
+    textarea = self.browser.find_element(*self.COMMENT_TEXTAREA)
+    textarea.send_keys(content)
+    
+    submit = self.browser.find_element(*self.SUBMIT_BUTTON)
+    submit.click()
+    
+    # Wait for comment to appear
+    # (Your AJAX implementation might show a loading spinner)
+    WebDriverWait(self.browser, 10).until(
+        lambda driver: content in driver.find_element(*self.COMMENTS_LIST).text
+    )
+    
+    return self</code></pre>
+
+            <h3>Step 3: Write E2E Tests</h3>
+
+            <p>Create <code>tests/test_e2e/test_comments.py</code> and write these tests:</p>
+
+            <pre><code class="language-python"># tests/test_e2e/test_comments.py
+import pytest
+from tests.pages.login_page import LoginPage
+from tests.pages.post_page import PostPage
+from tests.pages.comment_section import CommentSection
+
+def test_view_existing_comments(browser, live_server, sample_post_with_comments):
+    """Test that existing comments are displayed."""
+    # TODO: Implement this test
+    # 1. Navigate to post page
+    # 2. Verify comment section shows existing comments
+    # 3. Verify comment count is correct
+    pass
+
+
+def test_add_comment_as_logged_in_user(browser, live_server, sample_user, sample_post):
+    """Test adding a comment when logged in."""
+    # TODO: Implement this test
+    # 1. Login
+    # 2. Navigate to post
+    # 3. Add a comment
+    # 4. Verify comment appears
+    # 5. Verify comment is in database
+    pass
+
+
+def test_cannot_comment_when_not_logged_in(browser, live_server, sample_post):
+    """Test that non-logged-in users see login prompt instead of comment form."""
+    # TODO: Implement this test
+    # 1. Navigate to post (without logging in)
+    # 2. Verify comment form is hidden
+    # 3. Verify login prompt is visible
+    pass
+
+
+def test_delete_own_comment(browser, live_server, sample_user, sample_post):
+    """Test deleting your own comment with confirmation."""
+    # TODO: Implement this test
+    # 1. Login and add a comment
+    # 2. Click delete button
+    # 3. Confirm in modal
+    # 4. Verify comment is removed
+    # 5. Verify comment is deleted from database
+    pass</code></pre>
+
+            <h3>Testing Tips</h3>
+
+            <ul>
+                <li>Use <code>WebDriverWait</code> for AJAX operations—comments might load asynchronously</li>
+                <li>Test both the UI state (what the user sees) and the database state (what was actually saved)</li>
+                <li>Handle modals carefully—wait for them to appear before interacting</li>
+                <li>Remember to test negative cases (not logged in, unauthorized actions)</li>
+            </ul>
+
+            <h3>Bonus Challenges</h3>
+
+            <p>If you finish the basic tests, try these advanced scenarios:</p>
+
+            <ol>
+                <li><strong>Real-time Updates:</strong> If your app uses WebSockets, test that comments appear in real-time</li>
+                <li><strong>Pagination:</strong> Test loading more comments with "Load More" button</li>
+                <li><strong>Editing Comments:</strong> Test editing your own comment</li>
+                <li><strong>Comment Moderation:</strong> Test admin ability to delete any comment</li>
+            </ol>
+
+            <h3>Solution Hints</h3>
+
+            <p>Here's the structure for one complete test to help you:</p>
+
+            <pre><code class="language-python">def test_add_comment_as_logged_in_user(browser, live_server, sample_user, sample_post, app):
+    """Test adding a comment when logged in."""
+    # Login
+    login_page = LoginPage(browser)
+    login_page.open(live_server).login(
+        sample_user['username'],
+        'password123'
+    )
+    
+    # Navigate to post
+    post_page = PostPage(browser)
+    post_page.open(live_server, sample_post['id'])
+    
+    # Add comment
+    comment_section = CommentSection(browser)
+    test_comment = "This is my E2E test comment!"
+    comment_section.add_comment(test_comment)
+    
+    # Verify in UI
+    assert comment_section.get_comment_count() > 0
+    assert test_comment in comment_section.get_comment_text(0)
+    
+    # Verify in database
+    with app.app_context():
+        from app.models import Comment
+        comment = Comment.query.filter_by(content=test_comment).first()
+        assert comment is not None
+        assert comment.author_id == sample_user['id']
+        assert comment.post_id == sample_post['id']</code></pre>
+
+            <h3>Running Your Tests</h3>
+
+            <p>Once you've implemented your tests, run them:</p>
+
+            <pre><code class="language-bash"># Run comment E2E tests
+(venv) $ pytest tests/test_e2e/test_comments.py -v
+
+# Run with visible browser for debugging
+(venv) $ pytest tests/test_e2e/test_comments.py -v
+
+# Run just one test
+(venv) $ pytest tests/test_e2e/test_comments.py::test_add_comment_as_logged_in_user -v</code></pre>
+
+            <h3>Success Criteria</h3>
+
+            <p>Your exercise is complete when:</p>
+            <ul>
+                <li>All four required tests pass</li>
+                <li>Your CommentSection page object is fully implemented</li>
+                <li>Tests verify both UI and database state</li>
+                <li>Tests handle AJAX loading properly</li>
+                <li>You understand how Page Object Model makes tests maintainable</li>
+            </ul>
+        </div>
+
+        <h2>What We've Learned</h2>
+
+        <p>Take a moment to appreciate everything you've accomplished in this chapter:</p>
+
+        <ul>
+            <li>✓ You understand when to use E2E tests versus unit tests and integration tests</li>
+            <li>✓ You can set up Selenium WebDriver with pytest for automated browser testing</li>
+            <li>✓ You know how to find elements using multiple strategies (ID, CSS, XPath)</li>
+            <li>✓ You've learned proper waiting strategies to handle timing issues</li>
+            <li>✓ You can use explicit waits with expected conditions instead of fixed sleeps</li>
+            <li>✓ You understand the Page Object Model pattern and why it's essential for maintainable E2E tests</li>
+            <li>✓ You can test JavaScript interactions: modals, dropdowns, rich text editors</li>
+            <li>✓ You've learned how to test AJAX calls and dynamic content loading</li>
+            <li>✓ You can execute JavaScript directly in the browser when needed</li>
+            <li>✓ You know how to run tests in headless mode for CI/CD pipelines</li>
+            <li>✓ You understand cross-browser testing strategies</li>
+            <li>✓ You've learned E2E testing best practices: independence, descriptive selectors, realistic timeouts</li>
+            <li>✓ You can debug failing E2E tests with screenshots and page source</li>
+        </ul>
+
+        <p>E2E testing is powerful but requires discipline. The Page Object Model pattern you learned here is industry-standard—it's used in countless production test suites because it works. By encapsulating page interactions in objects, you make your tests resilient to UI changes while keeping them readable and maintainable. This is crucial because E2E tests are expensive to write and run, so they need to provide maximum value without becoming a burden!</p>
+
+        <h2>Before You Continue...</h2>
+
+        <p>Before moving on to Chapter 11, make sure you:</p>
+
+        <ol>
+            <li>Can explain when E2E tests are appropriate versus unit or integration tests</li>
+            <li>Have Selenium WebDriver working on your system with pytest</li>
+            <li>Understand the difference between implicit and explicit waits</li>
+            <li>Can implement the Page Object Model pattern for new pages</li>
+            <li>Know how to test JavaScript interactions and AJAX calls</li>
+            <li>Have completed the comment system E2E tests exercise</li>
+            <li>Can run tests in headless mode for CI/CD</li>
+            <li>Understand why we use <code>WebDriverWait</code> instead of <code>time.sleep()</code></li>
+            <li>Can debug failing E2E tests with screenshots and browser inspection</li>
+            <li>Know the trade-offs: E2E tests are slow but test real user experience</li>
+        </ol>
+
+        <p>If something doesn't make complete sense yet, that's okay! E2E testing is one of the more complex topics in software testing. The key insights are: (1) E2E tests verify the complete user experience, including JavaScript and browser rendering, (2) use them sparingly for critical workflows, (3) the Page Object Model makes them maintainable, and (4) proper waits are essential for reliable tests. Everything else builds on these foundations. You'll get more practice and see more patterns throughout the rest of this course!</p>
+
+        <div class="success">
+            <strong>Next Up:</strong> In Chapter 11, you're going to shift gears and learn about performance and load testing. E2E tests verify that your application works correctly, but can it handle 100 concurrent users? 1,000? 10,000? You'll discover how to use Locust to simulate realistic traffic, identify bottlenecks, and optimize your application's performance under load. Performance testing ensures your app doesn't just work—it works fast, even when traffic spikes!
+        </div>
+
+        <div class="nav-links">
+            <a href="chapter09.html">← Previous Chapter</a>
+            <a href="index.html">Index</a>
+            <a href="chapter11.html">Next Chapter →</a>
+        </div>
+
+        <footer>
+            <p>Flask Testing Mastery - A comprehensive course on testing Flask applications</p>
+            <p style="font-size: 0.9em;">Questions or feedback? Let me know!</p>
+        </footer>
+    </div>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</body>
+</html>
